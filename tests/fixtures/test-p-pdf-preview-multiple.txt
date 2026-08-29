@@ -1,0 +1,7 @@
+请使用 $p-pdf-preview skill 执行这个多篇文献调研路径创建测试。
+
+测试目标：只创建调研目录、`dois_row.txt` 和 `summary.md`，验证多篇模式路径和 DOI 第二列子目录名是否正确。不要下载 PDF，不要运行 $p-pdf-download，也不要调用任何下载脚本。
+
+请创建一个多篇文献调研任务：
+
+- 调研主题：FCC-HCP 相变的DFT计算

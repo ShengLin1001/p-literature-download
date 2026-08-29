@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 下载结果、浏览器截图和历史测试产物只保留在本机。
+tests/artifacts/
+*.pdf
+
+# 运行时报告。
+browser-get-report.json
+*.log

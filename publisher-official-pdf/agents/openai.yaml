@@ -1,0 +1,4 @@
+interface:
+  display_name: "Publisher Official PDF"
+  short_description: "从出版商官网批量下载学术正文 PDF"
+  default_prompt: "Use $publisher-official-pdf to download a DOI list from publisher official websites only."

@@ -1,0 +1,46 @@
+10.1038/nature12373	test1
+10.1016/j.cell.2016.03.044	test2
+10.1002/adma.73337	test3
+10.1126/science.aea1676	test4
+10.1073/pnas.0507655102	test5
+10.1093/nar/gkag457	test6
+10.1021/jacs.5c20581	test7
+10.1007/s00220-014-2131-9	test8
+10.1103/PhysRevB.88.064104	test9
+10.1088/1361-648x/ae62e5	test10
+10.1101/2020.03.22.20041079	test11
+10.3390/s21051705	test12
+10.1371/journal.pone.0000308	test13
+10.3389/fnins.2013.00071	test14
+10.1186/1471-2105-15-135	test15
+10.1039/d5cs01021g	test16
+10.1063/5.0316442	test17
+10.1145/3806644	test18
+10.1109/tit.2026.3670320	test19
+10.1146/annurev.psych.52.1.1	test20
+https://doi.org/10.48550/arXiv.1706.03762	test21
+10.1016/j.commatsci.2018.12.013	test22
+
+# Notes:
+# 10.1038/nature12373                 Nature direct / Springer Nature
+# 10.1016/j.cell.2016.03.044          Elsevier / Cell Press
+# 10.1002/adma.73337                  Wiley
+# 10.1126/science.aea1676             Science / AAAS
+# 10.1073/pnas.0507655102             PNAS direct
+# 10.1093/nar/gkag457                 Oxford
+# 10.1021/jacs.5c20581                ACS
+# 10.1007/s00220-014-2131-9           Springer
+# 10.1103/PhysRevB.88.064104          APS / Physical Review B bug case
+# 10.1088/1361-648x/ae62e5            IOP
+# 10.1101/2020.03.22.20041079         bioRxiv / medRxiv preprint
+# 10.3390/s21051705                   MDPI open access
+# 10.1371/journal.pone.0000308        PLOS direct
+# 10.3389/fnins.2013.00071            Frontiers direct
+# 10.1186/1471-2105-15-135            BMC direct
+# 10.1039/d5cs01021g                  RSC
+# 10.1063/5.0316442                   AIP
+# 10.1145/3806644                     ACM
+# 10.1109/tit.2026.3670320            IEEE
+# 10.1146/annurev.psych.52.1.1        Annual Reviews
+# https://doi.org/10.48550/arXiv.1706.03762  DOI URL normalization + arXiv
+# 10.1016/j.commatsci.2018.12.013     Elsevier / Computational Materials Science
