@@ -137,6 +137,7 @@ def main(args):
         return
     child_env = os.environ.copy()
     child_env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    child_env.setdefault("CLOAKBROWSER_VERSION", "151.0.7922.108.2")
     if args.initialize:
         completed = subprocess.run(cmd, env=child_env, check=False)
         if completed.returncode:
