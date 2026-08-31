@@ -67,6 +67,21 @@ python <skill目录>/scripts/edge_download.py dois.txt -o pdfs \
 跑批时窗口会被最小化，且每个标签页都以后台方式创建，不会反复弹到桌面上挡住你手头的事。
 只有 `--human-wait` 遇到图形验证码时才会把窗口恢复出来让你操作。
 
+### 人工接管（常开，不需要任何开关）
+
+你想接管就直接把 Edge 窗口拉出来自己操作，脚本不会把它压回去，也从不阻塞等你。
+resolve 循环每几秒重读一次所有标签页，所以：
+
+- 你手动过掉 Cloudflare / 验证码 / 机构登录 —— 下一轮轮询自动接着往下走；
+- 你手动打开 PDF（本标签页或新开标签页都行）—— 直接被捕捉为该篇正文，记为下载成功。
+
+判据是 `document.contentType == "application/pdf"`，不是 URL 后缀：PNAS 的
+`/doi/pdf/`、IEEE 的 `getPDF.jsp`、Annual Reviews 的 `?mimetype=application/pdf`
+都没有 `.pdf` 后缀，按后缀判会全部漏掉。
+
+每篇开始前会关掉遗留的 PDF 标签页。Nature / IEEE 会在新标签页打开 PDF，
+不清理的话下一篇会把上一篇还开着的 PDF 认成自己的。补充材料标签页不会被采信。
+
 ## 三、文件命名
 
 命名规则和期刊缩写表都在 `mymetal.academic.search.literature_download`，
@@ -123,9 +138,12 @@ python <skill目录>/scripts/verify_pdf.py <目录> --batch
 | 连不上 Edge | 没跑 `start_edge.ps1`，或 Edge 被关了。**永远不要**对 CDP 连接调 `browser.close()`，那会拆掉 DevTools 服务端 |
 | 挑战永远停在 "Request Verification: In Progress" | 开了系统代理。`start_edge.ps1` 已带 `--no-proxy-server`，确认没被绕过 |
 | 全部 `no_pdf_link (state paywall)` | 机构登录掉了，去自动化 Edge 里重新登录一次 |
-| `state captcha` | hCaptcha 图形验证，脚本过不了。加 `--human-wait 120` 由用户点，或跳过 |
+| `state captcha` | hCaptcha 图形验证，脚本过不了。加 `--human-wait 120` 由用户点，或直接拉出窗口自己过——接管常开 |
+| 我手动开了 PDF 但没被认到 | 确认开在同一个自动化 Edge 里；补充材料链接会被故意忽略 |
 | 跑批时 Edge 一直弹到桌面上 | 该版本已修复：标签页用 `Target.createTarget` 的 `background` 标志创建，窗口每轮最小化一次。注意 Windows 会把负窗口坐标夹回 (0,0)，离屏摆放没用 |
 | PDF 在内置阅读器里打开、拿不到文件 | 正常，级别 1 和 3 不依赖下载。**不要**去改 `always_open_pdf_externally`，它是受保护偏好，改了会被启动时还原 |
+| 日志出现 `↩️ 偏离到 …，退回 DOI 重来` | 正常自愈。页面跑到了非本文页（APS 的 `/prb/accepted`、SSO wayfinder 等），脚本退回 DOI 重来，最多两次 |
+| 大文件（20 MB 以上）报 `fetch_failed` | 超时不够。`--timeout 240` 起步，RSC 综述这类要走第 3 级取件 |
 | 某出版商改版后取不到 | 先跑诊断：打开文章页看 `get_page_state` 和 `filter_pdf_candidates` 的输出，再决定是加 host 规则还是加取件级别 |
 
 ## 七、报告口径

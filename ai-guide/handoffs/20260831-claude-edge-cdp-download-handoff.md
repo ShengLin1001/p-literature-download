@@ -174,6 +174,38 @@ PLOS、Frontiers、BMC、RSC、AIP、ACM、IEEE、Annual Reviews。
 不要把这个结果表述为「所有出版商、所有时间、全新 profile 下 100% 成功」：
 它依赖该 profile 已建立的机构会话，且出版商随时可能改版。
 
+## 四之三、人工接管与走丢恢复（2026-08-31 补）
+
+### 接管常开，无需开关
+
+resolve 循环每轮先扫一遍所有标签页：`document.contentType == 'application/pdf'`
+即认定为正文，同源 `fetch(location.href)` 完整取回。所以你随时可以把窗口拉出来
+自己过验证、自己开 PDF，脚本下一轮就接住，全程不阻塞等你。
+
+判据**不能用 URL 后缀**：PNAS `/doi/pdf/`、IEEE `getPDF.jsp`、Annual Reviews
+`?mimetype=application/pdf` 都没有 `.pdf`，按后缀判会全漏。实测 PNAS 页按后缀判为
+`unknown`，按 contentType 判正确并取回 267052 B。
+
+每篇开始前 `close_stale_pdf_tabs`：Nature / IEEE 在新标签页开 PDF，那个标签页会活过
+本篇，不清理下一篇会把上一篇的 PDF 认成自己的（旧 scansci-pdf 踩过同样的坑）。
+
+**没抄旧路径的网络响应嗅探**：它要求 Playwright 全程 attach 在 context 上听 response，
+而 attach 会被 Elsevier 的 CF 检测挂死（正是第 4 级存在的原因）。已知缺口：你点的按钮
+若**直接触发下载**（PDF 从未在标签页显示），当前认不到；补法是接管轮询时顺带比对
+`DOWNLOAD_DIR` 前后快照，复用 `cdp_download` 已有机制，不引入 attach。
+
+### 走丢恢复
+
+`try_institution_login` 会在任何 `unknown` 状态页面上找 "Sign in / Access" 点下去。
+实测 APS：页面落到 `journals.aps.org/prb/accepted`（不是本文），机构流程误点，
+跳到 `wayfinder.openathens.net` 后再也回不来，循环空转到超时。
+
+现在：`state == unknown` 且 URL 不含本文 DOI/PII 持续 25s，就退回 `doi.org/<doi>`
+重来，最多两次。实测两次连跑都命中恢复并成功取回 1044934 B。
+
+这个 bug 早就存在，只是之前几轮没撞上那个落点——「一次跑完 19/19」是真的，但它
+掩盖了一个概率性故障。
+
 ## 五、注意事项
 
 - **不要开系统代理跑这个脚本**。`start_edge.ps1` 已带 `--no-proxy-server`，
@@ -195,7 +227,7 @@ PLOS、Frontiers、BMC、RSC、AIP、ACM、IEEE、Annual Reviews。
 - 启动器：`publisher-official-pdf/scripts/start_edge.ps1`
 - 验收器：`publisher-official-pdf/scripts/verify_pdf.py`（沿用，未改）
 - DOI 全集：`dois.txt`（= `tests/fixtures/test-doi-init.txt`，22 篇）
-- 回归产物：`tests/artifacts/20260831-edge-singlepass/`
+- 回归产物：`tests/artifacts/20260831-final/`（19/19 下载并通过验收）
 
 已删除：`cdp_download.py`（手写 CDP，握手不稳）、`edge_cdp_patch.mjs`（早期探索）。
 `cb_download.py` 保留作 CloakBrowser 兜底。

@@ -23,6 +23,13 @@ Every tab is created in the background and the window is minimized once per
 run, so a batch does not keep raising Edge onto the user's desktop. Only
 --human-wait restores it, because a captcha has to be visible to be solved.
 
+Manual takeover is always available and needs no flag. Restore the window
+whenever you like and drive it yourself: the resolve loop re-reads every tab
+a few times a minute, so a challenge you clear by hand is simply noticed, and
+a PDF you open by hand - in this tab or a new one - is captured as the
+article. Detection is document.contentType, not a URL suffix, because several
+publishers serve the file from an extension-less path.
+
 Note that Edge's built-in PDF viewer cannot be turned off from here:
 always_open_pdf_externally is a protected preference and Edge restores it on
 startup. Tiers 1 and 3 are what make that irrelevant.
@@ -57,9 +64,10 @@ from pathlib import Path
 from mymetal.academic.search.literature_download import (
     check_journal_metadata, fetch_doi_metadata, generate_pdf_filename, parse_dois)
 from mymetal.academic.search.publisher_pdf import (
-    JS_ACCEPT_CONSENT, JS_FETCH_PDF, JS_FIND_PDF_URLS, JS_OPEN_INSTITUTION,
-    JS_PICK_INSTITUTION, JS_READ_CHUNK, JS_TYPE_INSTITUTION,
-    filter_pdf_candidates, get_page_state, get_publisher_pdf_url)
+    JS_ACCEPT_CONSENT, JS_FETCH_PDF, JS_FIND_PDF_URLS, JS_IS_PDF_DOCUMENT,
+    JS_OPEN_INSTITUTION, JS_PICK_INSTITUTION, JS_READ_CHUNK, JS_TYPE_INSTITUTION,
+    check_article_url, check_supplement_url, filter_pdf_candidates,
+    get_page_state, get_publisher_pdf_url)
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -118,6 +126,57 @@ def pdf_candidates(page, doi=""):
         pass
     lurl = [get_publisher_pdf_url(page.url)] + list(ldom)
     return filter_pdf_candidates([u for u in lurl if u], doi, page.url)
+
+
+# --- human takeover -----------------------------------------------------
+
+def check_pdf_tab(page) -> bool:
+    """Return whether this tab is currently displaying a PDF."""
+    try:
+        return bool(page.evaluate(JS_IS_PDF_DOCUMENT))
+    except Exception:
+        return False
+
+
+def grab_takeover_pdf(page, doi=""):
+    """Capture a PDF the user opened by hand, in this tab or any other.
+
+    Takeover needs no flag and never blocks: the resolve loop re-reads the
+    tabs every few seconds, so clearing a challenge, signing in, or opening
+    the PDF yourself is simply noticed on the next pass. Publishers like
+    Nature and IEEE open the PDF in a *new* tab, which is why every tab is
+    scanned rather than just the one the script drives.
+
+    Returns (pdf_bytes_or_None, source_url).
+    """
+    lpage = [page] + [pg for pg in page.context.pages if pg is not page]
+    for pg in lpage:
+        try:
+            if not check_pdf_tab(pg) or check_supplement_url(pg.url):
+                continue
+            data = fetch_in_page(pg, pg.url)
+            if data:
+                return data, pg.url
+        except Exception:
+            pass
+    return None, ""
+
+
+def close_stale_pdf_tabs(page) -> None:
+    """Close PDF tabs left over from an earlier DOI.
+
+    Takeover scans every tab and a PDF tab outlives the article that opened
+    it, so without this the next DOI captures the previous article's PDF as
+    its own. Only PDF tabs are touched; the user's other tabs are left alone.
+    """
+    for pg in page.context.pages:
+        if pg is page:
+            continue
+        try:
+            if check_pdf_tab(pg):
+                pg.close()
+        except Exception:
+            pass
 
 
 # --- institutional access ----------------------------------------------
@@ -406,6 +465,8 @@ def resolve_candidates(endpoint, page, doi, timeout, human_wait):
     tried_institution = False
     accepted_consent = False
     next_click = 0.0
+    lost_since = 0.0
+    relanded = 0
     state = "navigating"
     try:
         page.goto("https://doi.org/" + doi, wait_until="domcontentloaded", timeout=90000)
@@ -417,6 +478,29 @@ def resolve_candidates(endpoint, page, doi, timeout, human_wait):
                 time.sleep(2)
                 continue
             state = get_page_state(html, page.url)
+
+            # A PDF open in any tab is the answer, whatever the state says -
+            # this is what makes manual takeover work without a flag.
+            data, src = grab_takeover_pdf(page, doi)
+            if data:
+                return [src], "pdf_ready", data, src
+
+            # Recovery: the tab can end up somewhere that is not this article
+            # at all - an APS section index, or the SSO wayfinder the
+            # institution flow clicked into and never returned from. Nothing
+            # downstream can succeed from there, so go back to the DOI rather
+            # than poll a dead page until the deadline.
+            if state == "unknown" and not check_article_url(page.url, doi, page.url):
+                lost_since = lost_since or time.time()
+                if time.time() - lost_since > 25 and relanded < 2:
+                    relanded += 1
+                    lost_since = 0.0
+                    print(f"   ↩️  偏离到 {page.url[:60]}，退回 DOI 重来")
+                    page.goto("https://doi.org/" + doi,
+                              wait_until="domcontentloaded", timeout=90000)
+                    continue
+            else:
+                lost_since = 0.0
 
             # Cloudflare is the script's job: keep re-clicking the Turnstile
             # checkbox with human-shaped motion until it lets go.
@@ -522,9 +606,10 @@ def download_one(endpoint, doi, out_dir, timeout, human_wait, name):
     token = open_background_tab(endpoint)  # must exist before Playwright connects
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(endpoint, timeout=30000)
+        page = get_tab_by_token(browser.contexts[0], token)
+        close_stale_pdf_tabs(page)
         urls, state, data, src = resolve_candidates(
-            endpoint, get_tab_by_token(browser.contexts[0], token),
-            doi, timeout, human_wait)
+            endpoint, page, doi, timeout, human_wait)
         # Never browser.close(): on a CDP attachment that tears the DevTools
         # server down and Edge stops accepting clients.
     res["state"] = state
