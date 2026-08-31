@@ -329,6 +329,76 @@ def get_tab_by_token(context, token: str):
 
 
 DOWNLOAD_DIR = Path.home() / "edge-automation" / "downloads"
+
+
+def snapshot_downloads(watch_dir: Path = DOWNLOAD_DIR) -> set:
+    """Names already in the browser's download folder."""
+    try:
+        return {f.name for f in watch_dir.iterdir()}
+    except OSError:
+        return set()
+
+
+def grab_downloaded_pdf(sbefore, watch_dir: Path = DOWNLOAD_DIR):
+    """Pick up a PDF that the user's own click told Edge to download.
+
+    A publisher answering with Content-Disposition: attachment never shows the
+    file in a tab, so scanning tabs cannot see it. There is no moment to guess
+    at: the baseline is taken once when the article opens and every poll diffs
+    against it, so whichever poll follows the download finds the file. Edge
+    keeps a half-written download under a .crdownload name, which is what
+    makes a partial file distinguishable from a finished one.
+
+    Returns (pdf_bytes_or_None, source_label).
+    """
+    try:
+        lnew = [f for f in watch_dir.iterdir()
+                if f.name not in sbefore and f.is_file()
+                and not f.name.endswith(".crdownload")]
+    except OSError:
+        return None, ""
+    for path_new in lnew:
+        try:
+            data = path_new.read_bytes()
+        except OSError:
+            continue
+        if not data.startswith(b"%PDF-"):
+            continue
+        try:
+            path_new.unlink()   # consumed; the copy that matters goes to out_dir
+        except OSError:
+            pass
+        return data, "下载目录/" + path_new.name
+    return None, ""
+
+
+def check_pdf_identity(data: bytes, doi: str, title: str) -> str:
+    """Warn when a PDF does not look like the requested article.
+
+    Advisory only, never a gate. Papers from before DOIs were printed carry no
+    DOI at all, and their scans are OCR: the 1971 PRB test article extracts
+    "PHYSICAL REVIEW" as "PH YSICA L BEVI EUV", and its first page starts with
+    the tail of the *previous* article. A failed match is therefore weak
+    evidence, not proof, and must never delete or reject a file.
+
+    Returns a warning string, or "" when nothing looks wrong.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from verify_pdf import (doi_in_text, looks_like_supplementary, read_pdf,
+                            title_in_text)
+    try:
+        _, text = read_pdf(data)
+    except Exception as exc:
+        return f"PDF 文本解析失败（{str(exc)[:40]}）"
+    if looks_like_supplementary(text):
+        return "首页像补充材料而非正文"
+    if doi_in_text(text, doi) or (title and title_in_text(text, title)):
+        return ""
+    if len((text or "").strip()) < 200:
+        return "几乎抽不出文本（多半是扫描件），无法核对是否为本篇"
+    return "正文里没找到本篇 DOI 或标题，可能抓错文章"
+
+
 def cdp_download(endpoint: str, urls, timeout: int, watch_dir: Path = DOWNLOAD_DIR):
     """Open each URL in a bare tab; return (pdf_bytes, url) for the first hit.
 
@@ -468,6 +538,7 @@ def resolve_candidates(endpoint, page, doi, timeout, human_wait):
     lost_since = 0.0
     relanded = 0
     state = "navigating"
+    sbefore = snapshot_downloads()
     try:
         page.goto("https://doi.org/" + doi, wait_until="domcontentloaded", timeout=90000)
         deadline = time.time() + timeout
@@ -482,6 +553,8 @@ def resolve_candidates(endpoint, page, doi, timeout, human_wait):
             # A PDF open in any tab is the answer, whatever the state says -
             # this is what makes manual takeover work without a flag.
             data, src = grab_takeover_pdf(page, doi)
+            if not data:
+                data, src = grab_downloaded_pdf(sbefore)
             if data:
                 return [src], "pdf_ready", data, src
 
@@ -589,20 +662,22 @@ def get_output_name(doi):
     (non-journal types, SnapShots, journals with no abbreviation).
 
     Returns:
-        ``(filename, None)`` when supported, else ``(None, reason)``.
+        ``(filename, None, title)`` when supported, else ``(None, reason, "")``.
     """
     dict_metadata = fetch_doi_metadata(doi)
     reason = check_journal_metadata(dict_metadata)
     if reason:
-        return None, reason
-    return generate_pdf_filename(dict_metadata), None
+        return None, reason, ""
+    ltitle = (dict_metadata or {}).get("title") or [""]
+    return generate_pdf_filename(dict_metadata), None, ltitle[0]
 
 
-def download_one(endpoint, doi, out_dir, timeout, human_wait, name):
+def download_one(endpoint, doi, out_dir, timeout, human_wait, name, title=""):
     """Resolve with Playwright, then fetch detached. Returns a status dict."""
     from playwright.sync_api import sync_playwright
 
-    res = {"doi": doi, "status": "failed", "file": None, "state": "", "reason": ""}
+    res = {"doi": doi, "status": "failed", "file": None, "state": "",
+           "reason": "", "warning": ""}
     token = open_background_tab(endpoint)  # must exist before Playwright connects
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(endpoint, timeout=30000)
@@ -627,7 +702,9 @@ def download_one(endpoint, doi, out_dir, timeout, human_wait, name):
         return res
     dst = Path(out_dir) / name
     dst.write_bytes(data)
-    res.update(status="downloaded", file=str(dst), reason=f"{len(data)} bytes from {src[:90]}")
+    res.update(status="downloaded", file=str(dst),
+               reason=f"{len(data)} bytes from {src[:90]}",
+               warning=check_pdf_identity(data, doi, title))
     return res
 
 
@@ -651,7 +728,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("dois", nargs="?", help="DOI list file")
     ap.add_argument("-o", "--output", default=".")
-    ap.add_argument("--timeout", type=int, default=180, help="seconds per stage per DOI")
+    ap.add_argument("--timeout", type=int, default=300,
+                    help="seconds per stage per DOI; a 20MB+ review needs well over 180")
     ap.add_argument("--human-wait", type=int, default=0,
                     help="extra seconds granted after surfacing the tab on a captcha")
     ap.add_argument("--cdp", default="http://127.0.0.1:9333",
@@ -675,7 +753,7 @@ def main():
     for i, doi in enumerate(dois, 1):
         # Name before browsing: an unsupported record must be reported and
         # skipped, not downloaded and then discarded.
-        name, reason = get_output_name(doi)
+        name, reason, title = get_output_name(doi)
         if reason:
             print(f"⏭  [{i}/{len(dois)}] {doi}  ({reason})")
             results.append({"doi": doi, "status": "unsupported", "file": None,
@@ -689,12 +767,15 @@ def main():
             continue
         print(f"▶️  [{i}/{len(dois)}] {doi}  -> {name}")
         try:
-            r = download_one(args.cdp, doi, out_dir, args.timeout, args.human_wait, name)
+            r = download_one(args.cdp, doi, out_dir, args.timeout,
+                             args.human_wait, name, title)
         except Exception as exc:
             r = {"doi": doi, "status": "error", "file": None,
                  "state": "", "reason": str(exc)[:200]}
         results.append(r)
         print(f"   {r['status']}: {r['reason']}")
+        if r.get("warning"):
+            print(f"   ⚠️  {r['warning']}")
         if args.report:                     # rewrite after each DOI, so a long
             Path(args.report).parent.mkdir(parents=True, exist_ok=True)
             Path(args.report).write_text(   # run stays inspectable while it runs
@@ -702,6 +783,14 @@ def main():
 
     ok = sum(1 for r in results if r["status"] in ("downloaded", "skipped"))
     print(f"\n📊 {ok}/{len(results)}")
+    # Advisory only - these files were kept. Collecting them here matters,
+    # because a single line per DOI is lost in a long run.
+    lwarn = [r for r in results if r.get("warning")]
+    if lwarn:
+        print(f"\n⚠️  {len(lwarn)} 篇内容核对未通过（文件已保留，请自行确认）：")
+        for r in lwarn:
+            fname = Path(r["file"]).name if r["file"] else ""
+            print(f"   {r['doi']}  {fname}  —— {r['warning']}")
     raise SystemExit(0 if ok == len(results) else 1)
 
 

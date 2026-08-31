@@ -40,6 +40,8 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 - 换学校要改 `scripts/edge_download.py` 顶部的 `INSTITUTION`；
 - 遇到 hCaptcha 图片题时脚本过不了，由用户本人处理（`--human-wait N` 会把标签页弹到前台）。
   Cloudflare Turnstile 一律由脚本拟人化点击通过，不打扰用户。
+- **跑批期间不要在这个自动化 Edge 窗口里打开无关 PDF**，会被当成当前这篇抓走。
+  临时看文献用自己的日常 Edge。详见 SKILL.md 的「人工接管」小节。
 
 ## 4. 安装 skill
 

@@ -126,6 +126,7 @@ $PY publisher-official-pdf/scripts/edge_download.py dois.txt \
     --report tests/artifacts/<date>-edge/report.json
 ```
 
+`--timeout` 默认 300s：RSC 那篇 21 MB 综述在 180s 下必失败。
 `--report` 每篇写一次，长跑过程中可随时查看。`--human-wait N` 只在遇到
 hCaptcha / reCAPTCHA 图形验证时把标签页弹到前台等 N 秒；Cloudflare 一律由脚本自己点。
 
@@ -189,10 +190,25 @@ resolve 循环每轮先扫一遍所有标签页：`document.contentType == 'appl
 每篇开始前 `close_stale_pdf_tabs`：Nature / IEEE 在新标签页开 PDF，那个标签页会活过
 本篇，不清理下一篇会把上一篇的 PDF 认成自己的（旧 scansci-pdf 踩过同样的坑）。
 
+接管认三条路：手动开 PDF（扫标签页）、手动过验证后交回脚本（状态机继续）、
+**手动点下载**（每篇入口给 `DOWNLOAD_DIR` 拍快照，之后每轮轮询比对新增的完整 PDF）。
+快照没有时机问题：基线是每篇一张，比对是每轮一次，文件何时落地下一轮就发现。
+
 **没抄旧路径的网络响应嗅探**：它要求 Playwright 全程 attach 在 context 上听 response，
-而 attach 会被 Elsevier 的 CF 检测挂死（正是第 4 级存在的原因）。已知缺口：你点的按钮
-若**直接触发下载**（PDF 从未在标签页显示），当前认不到；补法是接管轮询时顺带比对
-`DOWNLOAD_DIR` 前后快照，复用 `cdp_download` 已有机制，不引入 attach。
+而 attach 会被 Elsevier 的 CF 检测挂死（正是第 4 级存在的原因）。下载目录快照用更少的
+代价覆盖了嗅探的主要价值，且不引入 attach。
+
+### 内容核对只警告，不拦截
+
+落盘后抽前 3 页文本核对 DOI / 标题 / 是否补充材料，不通过只打印并在末尾汇总，
+**文件一律保留**。硬判据必然误杀：`10.1103/PhysRevB.4.2406`（1971）PDF 里没印 DOI，
+且是 OCR 扫描件，`PHYSICAL REVIEW` 抽成 `PH YSICA L BEVI EUV`，首页开头还是上一篇的
+参考文献尾巴。实测该文靠标题过，错配样本（IEEE 的 PDF 冒充 Nature 那篇）能报出来。
+
+### 使用纪律
+
+跑批期间**不要在自动化 Edge 里打开无关 PDF**。`close_stale_pdf_tabs` 只清理上一篇的
+残留，防不住本篇进行中新开的，那会被当成本篇正文抓走——文件名对、内容错。
 
 ### 走丢恢复
 
@@ -227,7 +243,7 @@ resolve 循环每轮先扫一遍所有标签页：`document.contentType == 'appl
 - 启动器：`publisher-official-pdf/scripts/start_edge.ps1`
 - 验收器：`publisher-official-pdf/scripts/verify_pdf.py`（沿用，未改）
 - DOI 全集：`dois.txt`（= `tests/fixtures/test-doi-init.txt`，22 篇）
-- 回归产物：`tests/artifacts/20260831-final/`（19/19 下载并通过验收）
+- 回归产物：`tests/artifacts/20260831-warn/`（19/19 下载并通过验收，零内容警告）
 
 已删除：`cdp_download.py`（手写 CDP，握手不稳）、`edge_cdp_patch.mjs`（早期探索）。
 `cb_download.py` 保留作 CloakBrowser 兜底。

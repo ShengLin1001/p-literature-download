@@ -60,11 +60,19 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
-def read_pdf(path: Path, max_pages: int = 3):
-    """Return (page_count, first_pages_text). Raises on unreadable file."""
+def read_pdf(source, max_pages: int = 3):
+    """Return (page_count, first_pages_text) from a path or raw bytes.
+
+    Bytes are accepted so a download can be checked before it ever reaches
+    disk; the download orchestrator uses that for its advisory identity check.
+    Raises on an unreadable file.
+    """
+    import io
+
     from pypdf import PdfReader
 
-    reader = PdfReader(str(path))
+    reader = PdfReader(io.BytesIO(source)
+                       if isinstance(source, (bytes, bytearray)) else str(source))
     n = len(reader.pages)
     text_parts = []
     for page in reader.pages[:max_pages]:
