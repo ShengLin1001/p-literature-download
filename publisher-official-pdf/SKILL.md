@@ -1,72 +1,145 @@
 ---
 name: publisher-official-pdf
-description: Batch-download academic article PDFs from publisher official websites using DOI lists, a persistent CloakBrowser profile, and institutional access when available. Use for official-site-only retrieval; never substitute APIs, aggregators, repositories, preprints, Sci-Hub, or LibGen.
+description: Batch-download academic article PDFs from publisher official websites using a DOI list, driving a dedicated Microsoft Edge profile that already holds the institutional session. Use for official-site-only retrieval; never substitute APIs, aggregators, repositories, preprints, Sci-Hub, or LibGen.
 ---
 
 # 出版商官网 PDF 批量下载
 
+从 DOI 进入出版商官网，过 Cloudflare 与机构登录，取回期刊正文 PDF。
+
 ## 边界
 
-- 只调用 `scansci-pdf browser-get`，从 DOI 进入出版商官网并保存正文 PDF。
-- 不调用 `scansci-pdf get`，不使用 Elsevier API、Unpaywall、OpenAlex、CORE、DOAJ、Sci-Hub、LibGen 或预印本替代。
-- 不把补充材料、预印本、Snapshot、采访、旧缓存或其他目录中的文件计作期刊正文下载成功。
-- 仅处理 `mymetal.academic.search.literature_download.JOURNAL_ABBREVIATIONS` 中有缩写的期刊；无匹配项直接报告并跳过。
-- 不读取、复制或共享用户的机构密码、Cookie、CloakBrowser key 或浏览器 profile。
+- 只从出版商官网取正文。不用 Elsevier API、Unpaywall、OpenAlex、CORE、DOAJ、Sci-Hub、LibGen，也不用预印本替代。
+- 补充材料、预印本、SnapShot、采访、旧缓存都不算下载成功。
+- 只处理 `mymetal.academic.search.literature_download.JOURNAL_ABBREVIATIONS` 中有缩写的期刊；无匹配项报告并跳过，不下载。
+- 不读取、复制或转发用户的机构密码、Cookie 或浏览器 profile。**脚本不接触任何凭据**，登录态来自用户自己在专用 profile 里登录一次留下的 cookie。
 
-## 环境检查
+## 一、一次性准备
 
-先运行：
-
-```powershell
-scansci-pdf browser-status
-python -m cloakbrowser info
-python -c "from mymetal.academic.search.literature_download import generate_pdf_filename; print('mymetal ok')"
-```
-
-若 `scansci-pdf` 不存在、版本未包含提交 `530e944`，或 CloakBrowser 尚未安装，读取 [references/setup.md](references/setup.md) 并完成安装。免费 CloakBrowser 足够运行单会话；不要把购买 Pro 描述为提高验证码通过率。
-
-## 先初始化，再自动下载
-
-DOI 文件每行一个 DOI，可在空白后附备注；空行和 `#` 注释忽略。
+### 1. 启动专用自动化 Edge
 
 ```powershell
-python <skill目录>\scripts\auto_pdf_download.py dois.txt -o pdfs --initialize --wait 600
-python <skill目录>\scripts\auto_pdf_download.py dois.txt -o pdfs --skip-existing --retries 1
+powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 ```
 
-第一条命令只建立当前用户自己的 hCaptcha、机构 SSO/MFA 和访问确认状态，不保存 PDF；第二条才自动下载。脚本使用同一个持久 profile，默认等待 180 秒，并在同一浏览器会话内对失败项自动重试一次。
+会用独立 profile `%USERPROFILE%\edge-automation` 启动 Edge，带三个必需参数：
 
-若要声明初始化状态可复用，必须用“同一出版商的另一篇 DOI”验证，不能只重复下载初始化时使用的同一篇文章。
+| 参数 | 为什么必需 |
+|---|---|
+| `--remote-debugging-port=9333` | 脚本的唯一入口 |
+| `--user-data-dir=%USERPROFILE%\edge-automation` | 与日常浏览器隔离，登录态持久 |
+| `--no-proxy-server` | **载荷性参数**。走系统代理时 Cloudflare 会因出口 IP 判定，把出版商挑战永久挂在 "Request Verification: In Progress"；直连后同一 URL 立刻成功 |
 
-成功必须同时满足：
+不要用日常 Edge 通过 `edge://inspect` 临时开的调试端口：它的 `/json/*` 全部 404，且第一个客户端断开后就不再完成 WebSocket 握手。
 
-- 本轮在指定目录生成对应 PDF；
-- 文件以 `%PDF-` 开头，尾部存在 `%%EOF`，且大小合理；
-- 元数据确认是受支持期刊的 `journal-article`，而非预印本或被排除的文章类型；
-- 批次内 PDF 摘要唯一，避免上一标签页正文串到下一 DOI；
-- 来源日志为 `Publisher(Browser)` 或用户明确同意后的 `Publisher(Browser-Manual)`。
-- 最终文件名为 `年份-期刊缩写-标题前十个有效字符.pdf`；空格和标点转为连字符。
+### 2. 在弹出的窗口里手动登录一次机构账号
 
-## 首次授权与失败处理
+登录 WebVPN / CARSI / 统一身份认证。cookie 落在该 profile，之后每次跑脚本自动复用。
 
-初始化阶段由用户本人处理：
+**验证登录成功**：随便打开一篇订阅文献，页面上应出现「Access provided by / Brought to you by 你的学校」。
 
-```powershell
-python <skill目录>\scripts\auto_pdf_download.py dois.txt -o pdfs --initialize --wait 600
+### 3. 换一个学校
+
+改 `scripts/edge_download.py` 顶部的 `INSTITUTION`（默认 `"Zhejiang University"`），
+它用于出版商「Access through your institution」下拉框里的机构名匹配。
+
+## 二、跑下载
+
+DOI 文件每行一个 DOI，可在空白后附备注；空行和 `#` 开头的行忽略。
+
+```bash
+python <skill目录>/scripts/edge_download.py dois.txt -o pdfs \
+    --timeout 180 --skip-existing --report pdfs/report.json
 ```
 
-- hCaptcha 图片识别；
-- 首次机构 SSO、密码或 MFA；
-- 出版商要求用户确认访问。
+| 开关 | 含义 |
+|---|---|
+| `-o/--output` | PDF 输出目录 |
+| `--timeout` | 每篇每阶段秒数上限（默认 180） |
+| `--skip-existing` | 已有同名文件就跳过，用于补跑 |
+| `--report` | 每篇写一次 JSON，长跑过程中可随时查看 |
+| `--cdp` | CDP 端点（默认 `http://127.0.0.1:9333`） |
+| `--human-wait N` | **只**在遇到 hCaptcha / reCAPTCHA 图形验证时把标签页弹到前台等 N 秒。Cloudflare 一律由脚本自己拟人化点击通过，不打扰用户 |
+| `--selftest` | 只跑自检，不下载 |
 
-之后必须用同出版商的不同 DOI 自动回归，才能声称初始化状态可复用。自动阶段已经重试一次；仍失败时不要无限循环，补足权限或等待会话恢复后再提交。`--manual` 只作单篇下载兜底，不用于证明自动化。遇到明确无订阅权限时停止并报告，不尝试绕过付费墙。
+脚本启动时先检查 Edge 是否可连；连不上直接报错退出，不会白跑整个列表。
 
-## 报告口径
+## 三、文件命名
 
-区分三种结论：
+命名规则和期刊缩写表都在 `mymetal.academic.search.literature_download`，
+所有下载器共用，格式为 `年份-期刊缩写-标题前十个有效字符.pdf`：
+
+```text
+2013-NATURE-Nanometre-s.pdf
+2021-SENSORS-Matheuristi.pdf
+```
+
+脚本**在开浏览器之前**先查 Crossref 定名。定不了名的记录直接报告并跳过，不下载：
+
+- `not a journal article` —— 不是 journal-article 类型（预印本、会议录等）
+- `excluded article type` —— SnapShot 之类的非正文条目
+- `journal abbreviation missing` —— 期刊不在缩写表里，需要先往 `JOURNAL_ABBREVIATIONS` 里加
+
+## 四、验收
+
+```bash
+python <skill目录>/scripts/verify_pdf.py <目录> --batch
+```
+
+单个 DOI 记为 **pass** 当且仅当全部满足：
+
+- 本轮真实落盘；
+- `%PDF-` 开头、`%%EOF` 结尾、页数 > 0；
+- 提取文本中的 DOI 或标题与 Crossref 元数据匹配；
+- 首页不是补充材料；
+- 文件名符合上面的命名规则。
+
+进入登录页、点击成功、`--selftest` 通过，都**不算** pass。
+
+## 五、原理：为什么是这个结构
+
+每篇 DOI 分两步。第一步 **resolve**：Playwright 通过 CDP 驱动 Edge，打开 `doi.org`，
+拟人化点击过 Cloudflare Turnstile，点掉 cookie 同意弹窗，必要时走机构登录，
+读出 PDF 候选链接。第二步 **fetch**：没有单一方法能覆盖所有出版商，四级逐次升级，先命中先返回。
+
+| 级别 | 方法 | 谁需要它 |
+|---|---|---|
+| 1 | 页内 `fetch()` + 分块 base64 回传 | 绝大多数（Nature、Springer、PLOS、APS、Science、PNAS、Wiley、ACS、IOP、Frontiers、Annual Reviews、ACM） |
+| 2 | 导航 + Playwright `expect_download` | MDPI —— Akamai 拦跨域 fetch，但放行真实导航 |
+| 3 | 导航到 PDF 后，在该页 `fetch(location.href)` | AIP、RSC、OUP（Silverchair）—— 发 inline PDF 不触发下载事件，但标签页此时已与 PDF 同源 |
+| 4 | 断开 Playwright，裸 CDP 开标签页下载 | Elsevier —— attach 的 DevTools 会话本身会被 Cloudflare 检测 |
+
+候选链接必须过滤两类噪声，否则会下错文件（都实际发生过）：
+补充材料（ACS `article-supplement/_si_`、Springer `/esm/`、OUP `_supplemental_file`），
+以及参考文献里别人的 PDF（Elsevier 一篇抓到 5 篇引文，AIP 抓到一份产品说明书）。
+
+## 六、常见故障
+
+| 现象 | 原因与处理 |
+|---|---|
+| 连不上 Edge | 没跑 `start_edge.ps1`，或 Edge 被关了。**永远不要**对 CDP 连接调 `browser.close()`，那会拆掉 DevTools 服务端 |
+| 挑战永远停在 "Request Verification: In Progress" | 开了系统代理。`start_edge.ps1` 已带 `--no-proxy-server`，确认没被绕过 |
+| 全部 `no_pdf_link (state paywall)` | 机构登录掉了，去自动化 Edge 里重新登录一次 |
+| `state captcha` | hCaptcha 图形验证，脚本过不了。加 `--human-wait 120` 由用户点，或跳过 |
+| PDF 在内置阅读器里打开、拿不到文件 | 正常，级别 1 和 3 不依赖下载。**不要**去改 `always_open_pdf_externally`，它是受保护偏好，改了会被启动时还原 |
+| 某出版商改版后取不到 | 先跑诊断：打开文章页看 `get_page_state` 和 `filter_pdf_candidates` 的输出，再决定是加 host 规则还是加取件级别 |
+
+## 七、报告口径
+
+区分三种结论，不要混为一谈：
 
 - `自动成功`：本轮无人操作完成；
-- `初始化后自动成功`：曾由用户建立 hCaptcha/机构会话，随后无人操作回归成功；
+- `初始化后自动成功`：曾由用户建立机构会话，随后无人操作回归成功；
 - `失败`：验证码未放行、会话过期或机构无权限。
 
-不得把“当前测试集成功”表述为所有出版商、所有时间、全新 profile 下的 100% 保证。
+不得把「当前测试集成功」表述为所有出版商、所有时间、全新 profile 下的 100% 保证。
+结果依赖该 profile 已建立的机构会话，且出版商随时可能改版。
+
+## 八、代码边界
+
+- `mymetal/academic/search/literature_download.py` —— DOI 解析、Crossref 元数据、期刊缩写、文件命名、PDF 完整性。
+- `mymetal/academic/search/publisher_pdf.py` —— 出版商站点知识：页面状态分类、PDF URL host 规则、候选过滤、注入的 JS。与浏览器无关，可被任何驱动复用。
+- 本 skill 的 `scripts/` —— 浏览器驱动与编排：Turnstile 拟人化点击、四级取件、CLI。
+
+新增通用文献函数放 `mymetal/academic`，不要在这里复制同类实现。
+修改 `mymetal/academic` 后在 `pjvasp_package` 根目录运行 `python tests/test_literature.py`。

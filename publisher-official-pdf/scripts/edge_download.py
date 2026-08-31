@@ -1,0 +1,546 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""Download publisher PDFs through a real, institution-logged-in Edge.
+
+Each DOI is first *resolved* with Playwright over CDP - open doi.org, clear
+Cloudflare with a human-shaped Turnstile click, dismiss the cookie overlay,
+walk the institution flow if needed, and collect PDF candidate URLs - and
+then *fetched*. No single fetch method covers every publisher, so four are
+tried in order, cheapest first:
+
+1. fetch() inside the page. Works almost everywhere and touches no disk.
+2. Navigate + Playwright download. For hosts that reject a cross-origin
+   fetch on CORS grounds but serve a plain navigation (MDPI's Akamai wall).
+3. Navigate, then fetch(location.href) from the PDF's own origin. For
+   Silverchair hosts (AIP, RSC, OUP) that send the PDF inline, so no
+   download event ever fires, but the tab is now same-origin with it.
+4. Detach Playwright entirely, then open the URL in a bare CDP tab. Only
+   Elsevier needs this: a DevTools session attached to *any* page makes
+   pdf.sciencedirectassets.com hang at "Request Verification: In Progress"
+   forever. Detached, the same URL downloads instantly.
+
+Note that Edge's built-in PDF viewer cannot be turned off from here:
+always_open_pdf_externally is a protected preference and Edge restores it on
+startup. Tiers 1 and 3 are what make that irrelevant.
+
+Start the browser once and leave it running (see start_edge.ps1):
+
+    msedge.exe --remote-debugging-port=9333
+        --user-data-dir=%USERPROFILE%\\edge-automation --no-proxy-server
+
+--no-proxy-server matters as much as the profile: through the system proxy,
+Cloudflare scores the exit IP badly enough to stall the same downloads.
+
+The daily Edge's runtime-enabled port (edge://inspect) is not usable here: it
+serves no /json/* endpoints and stops accepting WebSocket handshakes after
+the first client disconnects.
+
+Usage:
+    python edge_download.py dois.txt -o outdir [--report r.json] [--human-wait 90]
+    python edge_download.py --selftest
+"""
+
+import argparse
+import base64
+import json
+import random
+import re
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+from mymetal.academic.search.literature_download import (
+    check_journal_metadata, fetch_doi_metadata, generate_pdf_filename, parse_dois)
+from mymetal.academic.search.publisher_pdf import (
+    JS_ACCEPT_CONSENT, JS_FETCH_PDF, JS_FIND_PDF_URLS, JS_OPEN_INSTITUTION,
+    JS_PICK_INSTITUTION, JS_READ_CHUNK, JS_TYPE_INSTITUTION,
+    filter_pdf_candidates, get_page_state, get_publisher_pdf_url)
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+
+# --- page state ---------------------------------------------------------
+
+def click_turnstile_human(page):
+    """Click the Turnstile checkbox with human-shaped mouse motion.
+
+    Fingerprint alone does not clear these; Cloudflare scores the pointer
+    trajectory and press duration. The checkbox lives in a cross-origin
+    iframe, so aim at the *parent* of the hidden cf-turnstile-response input
+    (the iframe's own box is offset) and fall back to the iframe box.
+    """
+    box = None
+    try:
+        hidden = page.locator("input[name='cf-turnstile-response']")
+        if hidden.count():
+            box = hidden.first.locator("..").bounding_box()
+        if not box:
+            frame = page.locator("iframe[src*='challenges.cloudflare.com']")
+            if frame.count():
+                box = frame.first.bounding_box()
+    except Exception:
+        return False
+    if not box:
+        return False
+    x = box["x"] + random.uniform(19, 30)
+    y = box["y"] + box["height"] * random.uniform(0.45, 0.55)
+    page.mouse.move(random.uniform(100, 500), random.uniform(100, 400))
+    time.sleep(random.uniform(0.3, 0.8))
+    page.mouse.move(x, y, steps=random.randint(15, 30))
+    time.sleep(random.uniform(0.2, 0.5))
+    page.mouse.down()
+    time.sleep(random.uniform(0.09, 0.19))
+    page.mouse.up()
+    return True
+
+
+# --- PDF URL resolution -------------------------------------------------
+
+def pdf_candidates(page, doi=""):
+    """PDF URLs to try, best first.
+
+    A host rule outranks the page's own citation_pdf_url, because some
+    publishers advertise a link that only redirects back to the abstract.
+    """
+    ldom = []
+    try:
+        ldom = page.evaluate(JS_FIND_PDF_URLS) or []
+    except Exception:
+        pass
+    lurl = [get_publisher_pdf_url(page.url)] + list(ldom)
+    return filter_pdf_candidates([u for u in lurl if u], doi, page.url)
+
+
+# --- institutional access ----------------------------------------------
+
+INSTITUTION = "Zhejiang University"
+
+
+def try_institution_login(page):
+    """Walk the publisher's "access through your institution" flow.
+
+    Only the first article per publisher needs it: once the school IdP
+    (zjuam) has issued its SSO cookie into this profile, later redirects
+    resolve without any interaction.
+    """
+    try:
+        if not page.evaluate(JS_OPEN_INSTITUTION):
+            return False
+        page.wait_for_timeout(3500)
+        if page.evaluate(JS_TYPE_INSTITUTION, INSTITUTION):
+            page.wait_for_timeout(2500)
+            page.evaluate(JS_PICK_INSTITUTION, INSTITUTION)
+        page.wait_for_timeout(6000)
+        return True
+    except Exception:
+        return False
+
+
+# --- fetch: raw CDP, nothing attached -----------------------------------
+
+def browser_ws(endpoint: str) -> str:
+    with urllib.request.urlopen(endpoint.rstrip("/") + "/json/version", timeout=10) as fh:
+        return json.load(fh)["webSocketDebuggerUrl"]
+
+
+def check_endpoint(endpoint: str) -> str:
+    """Fail fast when the automation Edge is not up.
+
+    Without this the run burns through every DOI reporting connection errors,
+    which reads like a download problem rather than a browser that was never
+    started.
+    """
+    try:
+        browser_ws(endpoint)
+    except Exception as exc:
+        print(f"❌ ERROR: 连不上自动化 Edge（{endpoint}）：{str(exc)[:90]}")
+        print(r"   先启动它：powershell -NoProfile -File "
+              r"publisher-official-pdf\scripts\start_edge.ps1")
+        print("   首次使用还需在弹出的窗口里手动登录一次机构账号（WebVPN / CARSI）。")
+        raise SystemExit(1)
+    return endpoint
+
+
+class RawCdp:
+    """Browser-level CDP client that never attaches to a page.
+
+    Attaching is what trips the stricter publisher bot walls, so this client
+    only creates and closes targets and lets Edge's own download machinery
+    write the file to disk.
+    """
+
+    def __init__(self, endpoint: str):
+        import websocket  # websocket-client, present in the scansci-pdf venv
+        self.ws = websocket.create_connection(browser_ws(endpoint), timeout=30,
+                                              suppress_origin=True)
+        self.n = 0
+
+    def send(self, method, params=None):
+        self.n += 1
+        self.ws.send(json.dumps({"id": self.n, "method": method, "params": params or {}}))
+        while True:
+            msg = json.loads(self.ws.recv())
+            if msg.get("id") == self.n:
+                if "error" in msg:
+                    raise RuntimeError(f"{method}: {msg['error']}")
+                return msg.get("result", {})
+
+    def close(self):
+        try:
+            self.ws.close()
+        except Exception:
+            pass
+
+
+DOWNLOAD_DIR = Path.home() / "edge-automation" / "downloads"
+def cdp_download(endpoint: str, urls, timeout: int, watch_dir: Path = DOWNLOAD_DIR):
+    """Open each URL in a bare tab; return (pdf_bytes, url) for the first hit.
+
+    Watches Edge's own download folder rather than redirecting it:
+    Browser.setDownloadBehavior does not reliably apply to the already-open
+    default context, and a download that silently lands in the user's real
+    Downloads folder looks identical to a failure. The folder is set once, in
+    the automation profile's preferences, to keep it out of the way.
+    """
+    if not urls:
+        return None, ""
+    watch_dir.mkdir(parents=True, exist_ok=True)
+    cdp = RawCdp(endpoint)
+    try:
+        for url in urls:
+            before = {f.name for f in watch_dir.iterdir()}
+            tid = cdp.send("Target.createTarget", {"url": url})["targetId"]
+            deadline = time.time() + timeout
+            done = None
+            try:
+                while time.time() < deadline:
+                    time.sleep(2)
+                    new = [f for f in watch_dir.iterdir()
+                           if f.name not in before and f.is_file()
+                           and not f.name.endswith(".crdownload")]
+                    if new:
+                        done = new[0]
+                        break
+            finally:
+                try:
+                    cdp.send("Target.closeTarget", {"targetId": tid})
+                except Exception:
+                    pass
+            if not done:
+                continue
+            data = done.read_bytes()
+            try:
+                done.unlink()
+            except OSError:
+                pass
+            if data[:5] == b"%PDF-":
+                return data, url
+        return None, ""
+    finally:
+        cdp.close()
+
+
+# In-page fetch: the tab's own session, cookies and Cloudflare clearance.
+# Preferred when the publisher allows it, because it needs no download at all
+# and so does not depend on Edge's PDF-viewer setting (which is a protected
+# preference - editing Preferences directly gets reverted on startup).
+CHUNK = 3 * 1024 * 1024      # a multiple of 3, so no chunk needs base64 padding
+
+
+def fetch_in_page(page, url: str):
+    """Fetch url from inside the tab. Returns PDF bytes or None."""
+    size = page.evaluate(JS_FETCH_PDF, url)
+    if not size or size < 1024:
+        return None
+    # Decode each chunk separately: every chunk carries its own base64
+    # padding, so concatenating the *encoded* strings corrupts the file.
+    parts = []
+    off = 0
+    while off < size:
+        n = min(CHUNK, size - off)
+        parts.append(base64.b64decode(page.evaluate(JS_READ_CHUNK, [off, n])))
+        off += n
+    data = b"".join(parts)
+    return data if data[:5] == b"%PDF-" else None
+
+
+def fetch_by_download(page, url: str, timeout: int = 90):
+    """Navigate to url and capture the download Playwright forces.
+
+    Publishers that reject a page-context fetch() on CORS grounds (AIP, RSC,
+    OUP, MDPI) still serve a plain navigation. Playwright's own download
+    behaviour makes Chromium save the file instead of opening the built-in
+    PDF viewer, so this works without touching always_open_pdf_externally -
+    which Edge protects and restores on startup anyway.
+    """
+    with page.expect_download(timeout=timeout * 1000) as info:
+        try:
+            page.goto(url, wait_until="commit", timeout=timeout * 1000)
+        except Exception as exc:
+            # Playwright aborts a navigation that turned into a download with
+            # this message; that is the success path.
+            if "download is starting" not in str(exc).lower():
+                raise
+    data = Path(info.value.path()).read_bytes()
+    return data if data[:5] == b"%PDF-" else None
+
+
+def fetch_after_navigate(page, url: str, timeout: int = 90):
+    """Navigate to the PDF, then fetch it same-origin from that very tab.
+
+    Silverchair hosts (AIP, RSC, OUP) hand out a tokenised URL that Chromium
+    renders in the built-in viewer instead of downloading, so no download
+    event ever fires. But the tab is now *on* the PDF's own origin, which
+    makes a plain fetch(location.href) succeed where a cross-origin one from
+    the article page was rejected.
+    """
+    try:
+        page.goto(url, wait_until="commit", timeout=timeout * 1000)
+    except Exception as exc:
+        if "download is starting" not in str(exc).lower():
+            raise
+    page.wait_for_timeout(6000)
+    if not re.search(r"\.pdf(\?|#|$)", page.url, re.I):
+        return None
+    return fetch_in_page(page, page.url)
+
+
+def fetch_any_in_page(page, urls):
+    """First candidate the tab can fetch itself. Returns (bytes, url)."""
+    for url in urls:
+        try:
+            data = fetch_in_page(page, url)
+        except Exception:
+            data = None
+        if data:
+            return data, url
+    return None, ""
+
+
+# --- resolve: Playwright ------------------------------------------------
+
+def resolve_candidates(context, doi, timeout, human_wait):
+    """Open the DOI, clear challenges and logins.
+
+    Returns (candidate_urls, state, pdf_bytes_or_None, source_url).
+    """
+    page = context.new_page()
+    asked_human = False
+    tried_institution = False
+    accepted_consent = False
+    next_click = 0.0
+    state = "navigating"
+    try:
+        page.goto("https://doi.org/" + doi, wait_until="domcontentloaded", timeout=90000)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                html = page.content()
+            except Exception:
+                time.sleep(2)
+                continue
+            state = get_page_state(html, page.url)
+
+            # Cloudflare is the script's job: keep re-clicking the Turnstile
+            # checkbox with human-shaped motion until it lets go.
+            if state == "cloudflare":
+                if time.time() >= next_click:
+                    next_click = time.time() + 20
+                    click_turnstile_human(page)
+                    time.sleep(random.uniform(6, 10))
+                    continue
+                time.sleep(3)
+                continue
+
+            # An image captcha cannot be scripted; if the caller opted into
+            # being asked, surface the tab once.
+            if state == "captcha":
+                if human_wait and not asked_human:
+                    asked_human = True
+                    page.bring_to_front()
+                    print(f"   🖐  captcha: 请在弹出的标签页里完成验证，最多等 {human_wait}s")
+                    deadline = max(deadline, time.time() + human_wait)
+                time.sleep(4)
+                continue
+
+            if not accepted_consent:
+                accepted_consent = True
+                try:
+                    if page.evaluate(JS_ACCEPT_CONSENT):
+                        page.wait_for_timeout(2500)
+                        continue
+                except Exception:
+                    pass
+
+            urls = pdf_candidates(page, doi)
+            if urls:
+                data, src = fetch_any_in_page(page, urls)
+                if not data:
+                    # Escalate: force a download, then - for hosts that render
+                    # the PDF inline instead - fetch it same-origin.
+                    for grab in (fetch_by_download, fetch_after_navigate):
+                        for url in urls:
+                            try:
+                                data = grab(page, url, min(90, timeout))
+                            except Exception:
+                                data = None
+                            if data:
+                                src = url
+                                break
+                        if data:
+                            break
+                if data or tried_institution:
+                    return urls, state, data, src
+                # Links are there but unreadable: usually the institution
+                # is not signed in yet on this publisher. Sign in and retry.
+                tried_institution = True
+                if try_institution_login(page):
+                    continue
+                return urls, state, None, ""
+
+            # No PDF link at all: publishers hide it until access is granted.
+            if not tried_institution:
+                tried_institution = True
+                if try_institution_login(page):
+                    if human_wait:
+                        page.bring_to_front()
+                        deadline = max(deadline, time.time() + human_wait)
+                    continue
+            time.sleep(4)
+        return [], state, None, ""
+    except Exception as exc:
+        return [], f"error: {str(exc)[:120]}", None, ""
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
+
+
+def get_output_name(doi):
+    """Resolve a DOI to its ``year-JOURNAL-title.pdf`` name, or a skip reason.
+
+    Naming and the journal abbreviation index live in mymetal, so every
+    downloader produces identical filenames. Crossref is queried before the
+    browser opens, which also filters out records this pipeline must not save
+    (non-journal types, SnapShots, journals with no abbreviation).
+
+    Returns:
+        ``(filename, None)`` when supported, else ``(None, reason)``.
+    """
+    dict_metadata = fetch_doi_metadata(doi)
+    reason = check_journal_metadata(dict_metadata)
+    if reason:
+        return None, reason
+    return generate_pdf_filename(dict_metadata), None
+
+
+def download_one(endpoint, doi, out_dir, timeout, human_wait, name):
+    """Resolve with Playwright, then fetch detached. Returns a status dict."""
+    from playwright.sync_api import sync_playwright
+
+    res = {"doi": doi, "status": "failed", "file": None, "state": "", "reason": ""}
+    with sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(endpoint, timeout=30000)
+        urls, state, data, src = resolve_candidates(
+            browser.contexts[0], doi, timeout, human_wait)
+        # Never browser.close(): on a CDP attachment that tears the DevTools
+        # server down and Edge stops accepting clients.
+    res["state"] = state
+    if not urls:
+        res.update(status="no_pdf_link", reason=f"no pdf link (state {state})")
+        return res
+
+    if not data:
+        # Playwright is fully disconnected by here, which is what lets the
+        # stricter publisher challenges actually complete.
+        data, src = cdp_download(endpoint, urls, min(120, timeout))
+    if not data:
+        res.update(status="fetch_failed",
+                   reason="links not retrievable: " + ", ".join(u[:90] for u in urls))
+        return res
+    dst = Path(out_dir) / name
+    dst.write_bytes(data)
+    res.update(status="downloaded", file=str(dst), reason=f"{len(data)} bytes from {src[:90]}")
+    return res
+
+
+def selftest():
+    """Check the pieces that live here; publisher rules are tested in mymetal."""
+    assert get_page_state("<html>Just a moment...</html>", "https://x/") == "cloudflare"
+    assert get_page_state("<html/>", "https://x/a/1.pdf") == "pdf_ready"
+    assert cdp_download("http://127.0.0.1:1", [], 1) == (None, "")
+    assert DOWNLOAD_DIR.name == "downloads"
+    dict_metadata = {
+        "type": "journal-article",
+        "title": ["Synthesis of bulk hexagonal diamond"],
+        "container-title": ["Nature"],
+        "published-print": {"date-parts": [[2013]]},
+    }
+    assert generate_pdf_filename(dict_metadata) == "2013-NATURE-Synthesis-o.pdf"
+    print("✅ edge_download selftest ok")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("dois", nargs="?", help="DOI list file")
+    ap.add_argument("-o", "--output", default=".")
+    ap.add_argument("--timeout", type=int, default=180, help="seconds per stage per DOI")
+    ap.add_argument("--human-wait", type=int, default=0,
+                    help="extra seconds granted after surfacing the tab on a captcha")
+    ap.add_argument("--cdp", default="http://127.0.0.1:9333",
+                    help="CDP endpoint of the automation Edge")
+    ap.add_argument("--skip-existing", action="store_true")
+    ap.add_argument("--report", default="")
+    ap.add_argument("--selftest", action="store_true")
+    args = ap.parse_args()
+    if args.selftest:
+        return selftest()
+
+    dois = parse_dois(Path(args.dois))
+    out_dir = Path(args.output).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    check_endpoint(args.cdp)
+    print(f"📡 {args.cdp}  ·  {len(dois)} DOIs  ->  {out_dir}")
+
+    results = []
+    for i, doi in enumerate(dois, 1):
+        # Name before browsing: an unsupported record must be reported and
+        # skipped, not downloaded and then discarded.
+        name, reason = get_output_name(doi)
+        if reason:
+            print(f"⏭  [{i}/{len(dois)}] {doi}  ({reason})")
+            results.append({"doi": doi, "status": "unsupported", "file": None,
+                            "state": "", "reason": reason})
+            continue
+        dst = out_dir / name
+        if args.skip_existing and dst.exists():
+            print(f"⏭  [{i}/{len(dois)}] {doi}  -> {name} (exists)")
+            results.append({"doi": doi, "status": "skipped", "file": str(dst),
+                            "state": "", "reason": "already downloaded"})
+            continue
+        print(f"▶️  [{i}/{len(dois)}] {doi}  -> {name}")
+        try:
+            r = download_one(args.cdp, doi, out_dir, args.timeout, args.human_wait, name)
+        except Exception as exc:
+            r = {"doi": doi, "status": "error", "file": None,
+                 "state": "", "reason": str(exc)[:200]}
+        results.append(r)
+        print(f"   {r['status']}: {r['reason']}")
+        if args.report:                     # rewrite after each DOI, so a long
+            Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.report).write_text(   # run stays inspectable while it runs
+                json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    ok = sum(1 for r in results if r["status"] in ("downloaded", "skipped"))
+    print(f"\n📊 {ok}/{len(results)}")
+    raise SystemExit(0 if ok == len(results) else 1)
+
+
+if __name__ == "__main__":
+    main()
