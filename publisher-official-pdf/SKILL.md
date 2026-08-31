@@ -64,6 +64,9 @@ python <skill目录>/scripts/edge_download.py dois.txt -o pdfs \
 
 脚本启动时先检查 Edge 是否可连；连不上直接报错退出，不会白跑整个列表。
 
+跑批时窗口会被最小化，且每个标签页都以后台方式创建，不会反复弹到桌面上挡住你手头的事。
+只有 `--human-wait` 遇到图形验证码时才会把窗口恢复出来让你操作。
+
 ## 三、文件命名
 
 命名规则和期刊缩写表都在 `mymetal.academic.search.literature_download`，
@@ -121,6 +124,7 @@ python <skill目录>/scripts/verify_pdf.py <目录> --batch
 | 挑战永远停在 "Request Verification: In Progress" | 开了系统代理。`start_edge.ps1` 已带 `--no-proxy-server`，确认没被绕过 |
 | 全部 `no_pdf_link (state paywall)` | 机构登录掉了，去自动化 Edge 里重新登录一次 |
 | `state captcha` | hCaptcha 图形验证，脚本过不了。加 `--human-wait 120` 由用户点，或跳过 |
+| 跑批时 Edge 一直弹到桌面上 | 该版本已修复：标签页用 `Target.createTarget` 的 `background` 标志创建，窗口每轮最小化一次。注意 Windows 会把负窗口坐标夹回 (0,0)，离屏摆放没用 |
 | PDF 在内置阅读器里打开、拿不到文件 | 正常，级别 1 和 3 不依赖下载。**不要**去改 `always_open_pdf_externally`，它是受保护偏好，改了会被启动时还原 |
 | 某出版商改版后取不到 | 先跑诊断：打开文章页看 `get_page_state` 和 `filter_pdf_candidates` 的输出，再决定是加 host 规则还是加取件级别 |
 

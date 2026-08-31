@@ -19,6 +19,10 @@ tried in order, cheapest first:
    pdf.sciencedirectassets.com hang at "Request Verification: In Progress"
    forever. Detached, the same URL downloads instantly.
 
+Every tab is created in the background and the window is minimized once per
+run, so a batch does not keep raising Edge onto the user's desktop. Only
+--human-wait restores it, because a captcha has to be visible to be solved.
+
 Note that Edge's built-in PDF viewer cannot be turned off from here:
 always_open_pdf_externally is a protected preference and Edge restores it on
 startup. Tiers 1 and 3 are what make that irrelevant.
@@ -197,6 +201,74 @@ class RawCdp:
             pass
 
 
+def get_page_targets(endpoint: str) -> list:
+    """Return open page target ids, newest first."""
+    with urllib.request.urlopen(endpoint.rstrip("/") + "/json/list", timeout=10) as fh:
+        return [t["id"] for t in json.load(fh) if t.get("type") == "page"]
+
+
+def set_window_state(endpoint: str, state: str) -> None:
+    """Minimize or restore the automation window.
+
+    Opening a tab is what raises Edge onto the user's desktop, so every tab
+    this script opens passes Target.createTarget's ``background`` flag and the
+    window is minimized once per run. Windows clamps a negative window
+    position back to (0, 0), so moving the window off-screen is not an option.
+    Restoring is only for the ``--human-wait`` path, where the user has to see
+    the captcha to solve it.
+
+    Some page targets carry no window at all (edge://downloads-hub is one), so
+    try each until one answers rather than trusting the first.
+    """
+    try:
+        cdp = RawCdp(endpoint)
+    except Exception:
+        return
+    try:
+        for tid in get_page_targets(endpoint):
+            try:
+                wid = cdp.send("Browser.getWindowForTarget", {"targetId": tid})["windowId"]
+            except Exception:
+                continue
+            cdp.send("Browser.setWindowBounds",
+                     {"windowId": wid, "bounds": {"windowState": state}})
+            return
+    except Exception:
+        pass
+    finally:
+        cdp.close()
+
+
+def open_background_tab(endpoint: str) -> str:
+    """Open a tab without raising Edge's window; return its URL marker.
+
+    Playwright's ``new_page`` always creates a foreground tab, which restores
+    the minimized window, and it only adopts targets that already exist when
+    ``connect_over_cdp`` runs. So the tab is created here over raw CDP with
+    ``background: true``, *before* Playwright connects, and picked back out by
+    the marker in its URL.
+    """
+    token = "bg-%d" % random.randrange(10 ** 9)
+    cdp = RawCdp(endpoint)
+    try:
+        cdp.send("Target.createTarget",
+                 {"url": "about:blank#" + token, "background": True})
+    finally:
+        cdp.close()
+    return token
+
+
+def get_tab_by_token(context, token: str):
+    """Return the page whose URL carries ``token``, else a fresh foreground tab."""
+    for page in context.pages:
+        try:
+            if token in page.url:
+                return page
+        except Exception:
+            pass
+    return context.new_page()  # window pops up, but the run still works
+
+
 DOWNLOAD_DIR = Path.home() / "edge-automation" / "downloads"
 def cdp_download(endpoint: str, urls, timeout: int, watch_dir: Path = DOWNLOAD_DIR):
     """Open each URL in a bare tab; return (pdf_bytes, url) for the first hit.
@@ -214,7 +286,8 @@ def cdp_download(endpoint: str, urls, timeout: int, watch_dir: Path = DOWNLOAD_D
     try:
         for url in urls:
             before = {f.name for f in watch_dir.iterdir()}
-            tid = cdp.send("Target.createTarget", {"url": url})["targetId"]
+            tid = cdp.send("Target.createTarget",
+                           {"url": url, "background": True})["targetId"]
             deadline = time.time() + timeout
             done = None
             try:
@@ -324,12 +397,11 @@ def fetch_any_in_page(page, urls):
 
 # --- resolve: Playwright ------------------------------------------------
 
-def resolve_candidates(context, doi, timeout, human_wait):
-    """Open the DOI, clear challenges and logins.
+def resolve_candidates(endpoint, page, doi, timeout, human_wait):
+    """Open the DOI in ``page``, clear challenges and logins.
 
     Returns (candidate_urls, state, pdf_bytes_or_None, source_url).
     """
-    page = context.new_page()
     asked_human = False
     tried_institution = False
     accepted_consent = False
@@ -362,6 +434,7 @@ def resolve_candidates(context, doi, timeout, human_wait):
             if state == "captcha":
                 if human_wait and not asked_human:
                     asked_human = True
+                    set_window_state(endpoint, "normal")
                     page.bring_to_front()
                     print(f"   🖐  captcha: 请在弹出的标签页里完成验证，最多等 {human_wait}s")
                     deadline = max(deadline, time.time() + human_wait)
@@ -408,6 +481,7 @@ def resolve_candidates(context, doi, timeout, human_wait):
                 tried_institution = True
                 if try_institution_login(page):
                     if human_wait:
+                        set_window_state(endpoint, "normal")
                         page.bring_to_front()
                         deadline = max(deadline, time.time() + human_wait)
                     continue
@@ -445,10 +519,12 @@ def download_one(endpoint, doi, out_dir, timeout, human_wait, name):
     from playwright.sync_api import sync_playwright
 
     res = {"doi": doi, "status": "failed", "file": None, "state": "", "reason": ""}
+    token = open_background_tab(endpoint)  # must exist before Playwright connects
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(endpoint, timeout=30000)
         urls, state, data, src = resolve_candidates(
-            browser.contexts[0], doi, timeout, human_wait)
+            endpoint, get_tab_by_token(browser.contexts[0], token),
+            doi, timeout, human_wait)
         # Never browser.close(): on a CDP attachment that tears the DevTools
         # server down and Edge stops accepting clients.
     res["state"] = state
@@ -506,6 +582,8 @@ def main():
     out_dir = Path(args.output).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     check_endpoint(args.cdp)
+    # Get the window out of the way once; background tabs keep it there.
+    set_window_state(args.cdp, "minimized")
     print(f"📡 {args.cdp}  ·  {len(dois)} DOIs  ->  {out_dir}")
 
     results = []
