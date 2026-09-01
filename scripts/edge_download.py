@@ -40,6 +40,9 @@ Start the browser once and leave it running (see start_edge.ps1):
         --user-data-dir=%USERPROFILE%\\.pj\\p-literature-download\\profile
         --no-proxy-server
 
+All local state lives under one --data-dir (default ~/.pj/p-literature-download):
+profile/ for the logged-in Edge session, download/ for what Edge drops.
+
 --no-proxy-server matters as much as the profile: through the system proxy,
 Cloudflare scores the exit IP badly enough to stall the same downloads.
 
@@ -345,34 +348,35 @@ def get_tab_by_token(context, token: str):
     return context.new_page()  # window pops up, but the run still works
 
 
-# Edge - not this script - decides where a download lands, so the folder below
-# is only a default: main() rebinds it from the profile Edge is actually using.
-# Watching the wrong folder makes tier 4 and the manual-download takeover fail
-# silently, which reads like a publisher problem rather than a wrong path.
-PJ_ROOT = Path.home() / ".pj" / "p-literature-download"
-PROFILE_DIR = PJ_ROOT / "profile"        # Edge --user-data-dir: the logged-in session
-DOWNLOAD_DIR = PJ_ROOT / "downloads"     # where Edge drops files
+# One knob for every bit of local state this skill keeps: --data-dir, holding
+# profile/ (the logged-in Edge session) and download/ (where Edge drops files).
+# start_edge.ps1 takes the same -DataDir and lays out the same two names.
+DATA_DIR = Path.home() / ".pj" / "p-literature-download"
+PROFILE_DIR = DATA_DIR / "profile"
+DOWNLOAD_DIR = DATA_DIR / "download"
 
 
-def get_download_dir(profile_dir=PROFILE_DIR) -> Path:
+def get_download_dir(data_dir=DATA_DIR) -> Path:
     """Read the download folder out of the Edge profile that will serve us.
 
-    start_edge.ps1 writes it into the profile, so the profile is the source of
-    truth; a constant on this side goes stale the moment someone passes
-    -ProfileDir or -DownloadDir. Falls back to the default when the profile has
-    not been created yet.
+    Edge - not this script - decides where a file lands, and start_edge.ps1
+    writes the folder into the profile, so the profile is the source of truth.
+    Watching the wrong folder makes tier 4 and the manual-download takeover
+    fail silently, which reads like a publisher problem rather than a wrong
+    path. Falls back to <data_dir>/download when the profile does not exist yet.
     """
+    data_dir = Path(data_dir)
     try:
         # utf-8-sig, not utf-8: a byte-order mark is a JSON parse error, and
         # anything that writes this file from PowerShell can leave one behind.
-        prefs = json.loads(
-            (Path(profile_dir) / "Default" / "Preferences").read_text(encoding="utf-8-sig"))
+        prefs = json.loads((data_dir / "profile" / "Default" / "Preferences")
+                           .read_text(encoding="utf-8-sig"))
         directory = (prefs.get("download") or {}).get("default_directory")
         if directory:
             return Path(directory)
     except (OSError, ValueError, TypeError, AttributeError):
         pass
-    return DOWNLOAD_DIR
+    return data_dir / "download"
 
 
 def snapshot_downloads(watch_dir: Path = None) -> set:
@@ -897,9 +901,8 @@ def selftest():
 
     # orchestration
     assert cdp_download("http://127.0.0.1:1", [], 1) == (None, "")
-    assert DOWNLOAD_DIR == Path.home() / ".pj" / "p-literature-download" / "downloads"
-    assert PROFILE_DIR.parent == DOWNLOAD_DIR.parent
-    assert get_download_dir(Path("no/such/profile")) == DOWNLOAD_DIR
+    assert (PROFILE_DIR, DOWNLOAD_DIR) == (DATA_DIR / "profile", DATA_DIR / "download")
+    assert get_download_dir(Path("no/such/dir")) == Path("no/such/dir") / "download"
 
     # presets: an explicit flag always beats the preset
     def ns(**kw):
@@ -946,10 +949,9 @@ def main():
                     help="extra seconds granted after surfacing the tab on a captcha")
     ap.add_argument("--cdp", default="http://127.0.0.1:9333",
                     help="CDP endpoint of the automation Edge")
-    ap.add_argument("--profile-dir", default=str(PROFILE_DIR),
-                    help="Edge profile dir to read the download folder from")
-    ap.add_argument("--download-dir", default="",
-                    help="override the folder watched for browser downloads")
+    ap.add_argument("--data-dir", default=str(DATA_DIR),
+                    help="local state root; holds profile/ and download/ "
+                         f"(default {DATA_DIR})")
     ap.add_argument("--skip-existing", action="store_true", default=None)
     ap.add_argument("--report", default="")
     ap.add_argument("--selftest", action="store_true")
@@ -965,8 +967,7 @@ def main():
     # Edge decides where downloads land, so take the folder from its own
     # profile rather than assuming. Bound once here, before any worker reads it.
     global DOWNLOAD_DIR
-    DOWNLOAD_DIR = (Path(args.download_dir) if args.download_dir
-                    else get_download_dir(args.profile_dir))
+    DOWNLOAD_DIR = get_download_dir(args.data_dir)
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     # Get the window out of the way once; background tabs keep it there.

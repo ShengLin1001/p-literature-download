@@ -41,7 +41,15 @@ python -m pip install playwright websocket-client pypdf
 powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 ```
 
-会用独立 profile `%USERPROFILE%\.pj\p-literature-download\profile` 启动 Edge，带三个必需参数：
+本机状态全部收在一个 `-DataDir` 下（默认 `%USERPROFILE%\.pj\p-literature-download`）：
+
+```text
+~/.pj/p-literature-download/     # --data-dir，一个参数管住全部本机状态
+├── profile/     # Edge 的 --user-data-dir，你的机构登录态在这里
+└── download/    # 浏览器下载落地处
+```
+
+Edge 带三个必需参数启动：
 
 | 参数 | 为什么必需 |
 |---|---|
@@ -102,8 +110,7 @@ python <skill目录>/scripts/edge_download.py <skill目录>/examples/dois-sample
 | `--report` | 每篇写一次 JSON，长跑过程中可随时查看 |
 | `--cdp` | CDP 端点（默认 `http://127.0.0.1:9333`） |
 | `--human-wait N` | **只**在遇到 hCaptcha / reCAPTCHA 图形验证时把标签页弹到前台等 N 秒。Cloudflare 一律由脚本自己拟人化点击通过，不打扰用户 |
-| `--profile-dir` | 从哪个 Edge profile 读下载目录（默认 `~/.pj/p-literature-download/profile`） |
-| `--download-dir` | 直接指定要监视的浏览器下载目录，覆盖上面读出来的值 |
+| `--data-dir` | 本机状态根目录（默认 `~/.pj/p-literature-download`），下辖 `profile/` 与 `download/` |
 | `--selftest` | 只跑离线自检，不联网、不下载 |
 
 ### 重试的口径
@@ -141,9 +148,9 @@ resolve 循环每几秒重读一次所有标签页，所以：
 所以三种接管动作都认：手动开 PDF、手动过验证后交回脚本、手动点下载。
 
 监视的是哪个目录？**以 Edge profile 里写的为准，不是脚本里的常量。**
-`start_edge.ps1` 把下载目录写进 `<profile>/Default/Preferences`（默认
-`~/.pj/p-literature-download/downloads`），`edge_download.py` 启动时再从同一处读回来并打印出来。
-落地是 Edge 干的，所以只能问 Edge；脚本这边写死一个常量，别人一改 `-DownloadDir`
+`start_edge.ps1` 把下载目录写进 `<data-dir>/profile/Default/Preferences`（默认
+`~/.pj/p-literature-download/download`），`edge_download.py` 启动时再从同一处读回来并打印出来。
+落地是 Edge 干的，所以只能问 Edge；脚本这边写死一个常量，别人一改 `-DataDir`
 就对不上，而对不上的表现是第 4 级取件和手动下载捕捉**静默失效**，看起来像出版商的问题。
 
 > ⚠️ **跑批期间不要在这个自动化 Edge 窗口里打开与本次任务无关的 PDF。**

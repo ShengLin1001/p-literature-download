@@ -38,9 +38,9 @@ powershell -NoProfile -File scripts\start_edge.ps1
 开调试端口 9333 并**直连**。这个 skill 用到的所有本机状态都在 `~/.pj/p-literature-download/` 下：
 
 ```text
-~/.pj/p-literature-download/
+~/.pj/p-literature-download/     # --data-dir，一个参数管住全部本机状态
 ├── profile/     # Edge 的 --user-data-dir，你的机构登录态在这里
-└── downloads/   # 浏览器下载落地处
+└── download/    # 浏览器下载落地处
 ```
 
 在弹出的窗口里手动登录一次你学校的统一身份认证 / WebVPN / CARSI，cookie 就留在这个
@@ -54,6 +54,8 @@ profile 里，之后每次跑脚本自动复用。
 ```powershell
 powershell -NoProfile -File scripts\start_edge.ps1 -LoginUrl "https://webvpn.your-university.edu/"
 ```
+
+换个位置放这些状态就传 `-DataDir`，Python 那边传同名的 `--data-dir`，两边只有这一个旋钮。
 
 换学校还要改 `scripts/edge_download.py` 顶部的 `INSTITUTION`（默认 `"Zhejiang University"`），
 它用来在出版商的「Access through your institution」下拉框里匹配机构名。
@@ -120,8 +122,7 @@ python scripts/edge_download.py dois.txt -o pdfs --preset agent   # 被 agent �
 | `--report` | 每篇写一次 JSON，长跑过程中随时可查 |
 | `--cdp` | CDP 端点，默认 `http://127.0.0.1:9333` |
 | `--human-wait N` | 只在遇到 hCaptcha 图形验证时把标签页弹到前台等 N 秒 |
-| `--profile-dir` | 从哪个 Edge profile 读下载目录，默认 `~/.pj/p-literature-download/profile` |
-| `--download-dir` | 直接指定要监视的浏览器下载目录 |
+| `--data-dir` | 本机状态根目录，默认 `~/.pj/p-literature-download`，下辖 `profile/` 与 `download/` |
 | `--selftest` | 只跑离线自检 |
 
 只有 `failed` / `no_pdf_link` / `fetch_failed` / `error` 会被重试。
@@ -134,7 +135,7 @@ python scripts/edge_download.py dois.txt -o pdfs --preset agent   # 被 agent �
 但有两条路径依赖它：Elsevier 走的第 4 级取件，以及你手动点「下载」按钮时的接管捕捉。
 
 **落地是 Edge 决定的，所以以 Edge profile 里写的为准。** `start_edge.ps1` 把目录写进
-`<profile>/Default/Preferences`（默认 `~/.pj/p-literature-download/downloads`，用 `-DownloadDir` 改），
+`<data-dir>/profile/Default/Preferences`（默认 `~/.pj/p-literature-download/download`），
 `edge_download.py` 启动时从同一处读回来并打印。两边对不上的表现是上面那两条路径
 **静默失效**，看起来像出版商的问题——所以启动时那行「浏览器下载目录」值得扫一眼。
 

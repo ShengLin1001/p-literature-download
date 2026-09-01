@@ -29,19 +29,19 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 本 skill 的所有本机状态都收在 `~/.pj/p-literature-download/` 下：
 
 ```text
-~/.pj/p-literature-download/
-├── profile/     # Edge 的 --user-data-dir，机构登录态在这里
-└── downloads/   # 浏览器下载落地处
+~/.pj/p-literature-download/     # --data-dir，一个参数管住全部本机状态
+├── profile/     # Edge 的 --user-data-dir，你的机构登录态在这里
+└── download/    # 浏览器下载落地处
 ```
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `-Port` | `9333` | CDP 调试端口 |
-| `-ProfileDir` | `~\.pj\p-literature-download\profile` | 独立 profile，登录态存这儿 |
-| `-DownloadDir` | `~\.pj\p-literature-download\downloads` | Edge 的下载目录，写进 profile 的 Preferences |
+| `-DataDir` | `~\.pj\p-literature-download` | 本机状态根目录，下辖 `profile\` 与 `download\` |
 | `-LoginUrl` | `about:blank` | 要先过 WebVPN 就填 `https://webvpn.your-university.edu/` |
 
-脚本会把 `-DownloadDir` 写进 `<profile>\Default\Preferences`，**profile 是全新的也会创建**——
+脚本会把 `<DataDir>\download` 写进 `<DataDir>\profile\Default\Preferences`，
+**profile 是全新的也会创建**——
 这一步跳过的话 Edge 会下到你真实的「下载」文件夹，而 `edge_download.py` 不看那里，
 表现是 Elsevier 取不到、手动点的下载也认不到，且没有任何报错。
 `edge_download.py` 启动时从同一个 Preferences 读回目录并打印，两边永远一致，

@@ -9,11 +9,11 @@
 # In Progress" forever. Direct, the same URL downloads instantly.
 param(
     [int]$Port = 9333,
-    [string]$ProfileDir = "$env:USERPROFILE\.pj\p-literature-download\profile",
-    # Where Edge drops files it downloads. edge_download.py reads this back out
-    # of the profile, so changing it here is enough - do not also hard-code it
-    # on the Python side.
-    [string]$DownloadDir = "$env:USERPROFILE\.pj\p-literature-download\downloads",
+    # Every bit of local state this skill keeps, under one root:
+    #   <DataDir>\profile   Edge --user-data-dir; your institutional session
+    #   <DataDir>\download  where Edge drops downloaded files
+    # edge_download.py takes the same --data-dir and expects the same two names.
+    [string]$DataDir = "$env:USERPROFILE\.pj\p-literature-download",
     # Landing page of your own institution's WebVPN / SSO. Only a convenience:
     # log in here once and the cookie stays in this profile. Leave at the
     # default if your institution needs no VPN.
@@ -31,7 +31,9 @@ if (-not $edge) {
     exit 1
 }
 
-$prefsFile = Join-Path $ProfileDir "Default\Preferences"
+$ProfileDir  = Join-Path $DataDir "profile"
+$DownloadDir = Join-Path $DataDir "download"
+$prefsFile   = Join-Path $ProfileDir "Default\Preferences"
 New-Item -ItemType Directory -Force -Path $DownloadDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $prefsFile) | Out-Null
 
@@ -51,7 +53,7 @@ while (Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
 # Elsevier tier and the manual-download takeover then fail for no visible
 # reason. Edge fills in every other preference on first launch.
 $p = if (Test-Path $prefsFile) {
-    Get-Content $prefsFile -Raw | ConvertFrom-Json
+    [System.IO.File]::ReadAllText($prefsFile) | ConvertFrom-Json
 } else {
     [pscustomobject]@{}
 }
@@ -68,6 +70,7 @@ $p.savefile | Add-Member default_directory          $DownloadDir  -Force
     ($p | ConvertTo-Json -Depth 100 -Compress),
     (New-Object System.Text.UTF8Encoding $false))
 
+Write-Host "data dir  : $DataDir"
 Write-Host "profile   : $ProfileDir"
 Write-Host "downloads : $DownloadDir"
 Write-Host "CDP       : http://127.0.0.1:$Port"
