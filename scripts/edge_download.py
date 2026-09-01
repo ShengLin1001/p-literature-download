@@ -838,7 +838,7 @@ def download_batch(args, ldoi, out_dir):
     for.
     """
     dresult = {}
-    for attempt in range(args.retries + 1):
+    for attempt in range(max(0, args.retries) + 1):
         lpending = [doi for doi in ldoi
                     if dresult.get(doi, {}).get("status", "failed") in SRETRIABLE]
         if not lpending:
