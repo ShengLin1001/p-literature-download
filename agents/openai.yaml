@@ -1,0 +1,9 @@
+interface:
+  display_name: "P Literature Download"
+  short_description: "从出版商官网批量下载学术正文 PDF（仅显式调用）"
+  default_prompt: "使用 $p-literature-download 按 DOI 列表从出版商官网下载正文 PDF。"
+
+# 该 skill 会驱动一个带机构登录态的真实浏览器并产生真实网络请求，
+# 误触发的代价是用户不知情地跑了一批下载。只允许 $p-literature-download 显式调用。
+policy:
+  allow_implicit_invocation: false

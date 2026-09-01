@@ -1,18 +1,37 @@
 ---
-name: publisher-official-pdf
-description: Batch-download academic article PDFs from publisher official websites using a DOI list, driving a dedicated Microsoft Edge profile that already holds the institutional session. Use for official-site-only retrieval; never substitute APIs, aggregators, repositories, preprints, Sci-Hub, or LibGen.
+name: p-literature-download
+description: "按 DOI 列表从出版商官网批量下载学术正文 PDF，驱动一个已登录机构账号的专用 Microsoft Edge。不要因为对话里出现了 DOI、论文、PDF、下载等字样就自动触发；也绝不用 API、聚合站、仓储、预印本、Sci-Hub 或 LibGen 替代官网正文。"
 ---
 
 # 出版商官网 PDF 批量下载
 
 从 DOI 进入出版商官网，过 Cloudflare 与机构登录，取回期刊正文 PDF。
 
+## 触发条件
+
+**只在用户显式点名时执行**，例如 `$p-literature-download`、"用 p-literature-download 下这批 DOI"。
+
+用户只是提到某篇文献、贴了个 DOI、问某篇论文讲什么，都**不要**启动本流程——
+它会打开浏览器、发真实网络请求、动用机构账号会话，误触发的代价由用户承担。
+不确定时先问一句，不要先跑。
+
 ## 边界
 
 - 只从出版商官网取正文。不用 Elsevier API、Unpaywall、OpenAlex、CORE、DOAJ、Sci-Hub、LibGen，也不用预印本替代。
 - 补充材料、预印本、SnapShot、采访、旧缓存都不算下载成功。
-- 只处理 `mymetal.academic.search.literature_download.JOURNAL_ABBREVIATIONS` 中有缩写的期刊；无匹配项报告并跳过，不下载。
+- 只处理 `scripts/literature_download.py` 的 `JOURNAL_ABBREVIATIONS` 中有缩写的期刊；无匹配项报告并跳过，不下载。
 - 不读取、复制或转发用户的机构密码、Cookie 或浏览器 profile。**脚本不接触任何凭据**，登录态来自用户自己在专用 profile 里登录一次留下的 cookie。
+
+## 依赖
+
+Python 3.11+、本机已装 Microsoft Edge，加三个 pip 包：
+
+```bash
+python -m pip install playwright websocket-client pypdf
+```
+
+不需要 `playwright install`：脚本用 `connect_over_cdp` 驱动本机已装的 Edge，不下载浏览器二进制。
+除此之外不依赖任何第三方包，`scripts/` 下的模块都是纯标准库，直接可跑。
 
 ## 一、一次性准备
 
@@ -47,10 +66,14 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 
 DOI 文件每行一个 DOI，可在空白后附备注；空行和 `#` 开头的行忽略。
 
+先用自带的开放获取样例确认环境正常（六篇、六家出版社，不需要机构订阅，应当 6/6）：
+
 ```bash
-python <skill目录>/scripts/edge_download.py dois.txt -o pdfs \
+python <skill目录>/scripts/edge_download.py <skill目录>/examples/dois-sample.txt -o pdfs \
     --timeout 180 --skip-existing --report pdfs/report.json
 ```
+
+再换成用户自己的 DOI 列表。
 
 | 开关 | 含义 |
 |---|---|
@@ -60,12 +83,15 @@ python <skill目录>/scripts/edge_download.py dois.txt -o pdfs \
 | `--report` | 每篇写一次 JSON，长跑过程中可随时查看 |
 | `--cdp` | CDP 端点（默认 `http://127.0.0.1:9333`） |
 | `--human-wait N` | **只**在遇到 hCaptcha / reCAPTCHA 图形验证时把标签页弹到前台等 N 秒。Cloudflare 一律由脚本自己拟人化点击通过，不打扰用户 |
-| `--selftest` | 只跑自检，不下载 |
+| `--selftest` | 只跑离线自检，不联网、不下载 |
 
 脚本启动时先检查 Edge 是否可连；连不上直接报错退出，不会白跑整个列表。
 
 跑批时窗口会被最小化，且每个标签页都以后台方式创建，不会反复弹到桌面上挡住你手头的事。
 只有 `--human-wait` 遇到图形验证码时才会把窗口恢复出来让你操作。
+
+**失败重跑**：脚本本身只跑一遍，不做轮询。agent 使用时看到失败自己重跑一次即可
+（加 `--skip-existing`，成功的不会重下）；偶发失败多半是 Cloudflare 抖动或超时，重跑就好。
 
 ### 人工接管（常开，不需要任何开关）
 
@@ -100,8 +126,8 @@ resolve 循环每几秒重读一次所有标签页，所以：
 
 ## 三、文件命名
 
-命名规则和期刊缩写表都在 `mymetal.academic.search.literature_download`，
-所有下载器共用，格式为 `年份-期刊缩写-标题前十个有效字符.pdf`：
+命名规则和期刊缩写表在 `scripts/literature_download.py`，
+格式为 `年份-期刊缩写-标题前十个有效字符.pdf`：
 
 ```text
 2013-NATURE-Nanometre-s.pdf
@@ -161,6 +187,7 @@ python <skill目录>/scripts/verify_pdf.py <目录> --batch
 | PDF 在内置阅读器里打开、拿不到文件 | 正常，级别 1 和 3 不依赖下载。**不要**去改 `always_open_pdf_externally`，它是受保护偏好，改了会被启动时还原 |
 | 日志出现 `↩️ 偏离到 …，退回 DOI 重来` | 正常自愈。页面跑到了非本文页（APS 的 `/prb/accepted`、SSO wayfinder 等），脚本退回 DOI 重来，最多两次 |
 | 大文件（20 MB 以上）报 `fetch_failed` | 超时不够。`--timeout 240` 起步，RSC 综述这类要走第 3 级取件 |
+| 偶发一两篇失败，重跑就好 | Cloudflare 抖动或超时。带 `--skip-existing` 重跑同一份列表即可，脚本自己不做轮询 |
 | 某出版商改版后取不到 | 先跑诊断：打开文章页看 `get_page_state` 和 `filter_pdf_candidates` 的输出，再决定是加 host 规则还是加取件级别 |
 
 ## 七、报告口径
@@ -176,9 +203,20 @@ python <skill目录>/scripts/verify_pdf.py <目录> --batch
 
 ## 八、代码边界
 
-- `mymetal/academic/search/literature_download.py` —— DOI 解析、Crossref 元数据、期刊缩写、文件命名、PDF 完整性。
-- `mymetal/academic/search/publisher_pdf.py` —— 出版商站点知识：页面状态分类、PDF URL host 规则、候选过滤、注入的 JS。与浏览器无关，可被任何驱动复用。
-- 本 skill 的 `scripts/` —— 浏览器驱动与编排：Turnstile 拟人化点击、四级取件、CLI。
+`scripts/` 下四个 Python 文件，全部自包含，无需安装本仓库：
 
-新增通用文献函数放 `mymetal/academic`，不要在这里复制同类实现。
-修改 `mymetal/academic` 后在 `pjvasp_package` 根目录运行 `python tests/test_literature.py`。
+| 文件 | 职责 |
+|---|---|
+| `edge_download.py` | 浏览器驱动与编排：Turnstile 拟人化点击、四级取件、人工接管、CLI |
+| `verify_pdf.py` | 验收：头尾标、页数、补充材料判定、DOI / 标题比对 |
+| `literature_download.py` | DOI 解析、Crossref 元数据、期刊缩写表、文件命名、PDF 完整性 |
+| `publisher_pdf.py` | 出版商站点知识：页面状态分类、PDF URL host 规则、候选过滤、注入的 JS。与浏览器无关 |
+
+改完任意一个，跑离线自检：
+
+```bash
+python <skill目录>/scripts/edge_download.py --selftest
+python <skill目录>/scripts/verify_pdf.py --selftest
+```
+
+自检不联网、不开浏览器，覆盖页面状态分类、host 规则、候选过滤、DOI 解析和命名。

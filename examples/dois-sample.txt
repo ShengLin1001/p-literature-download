@@ -1,0 +1,17 @@
+# 试跑用的示例 DOI —— 六篇开放获取文献，六家出版社。
+#
+# 全部不需要机构订阅，所以第一次装完就该拿到 6/6；拿不满说明是环境问题
+# （Edge 没起来、走了系统代理、依赖没装），不是权限问题。
+#
+#     python scripts/edge_download.py examples/dois-sample.txt -o pdfs --skip-existing
+#     python scripts/verify_pdf.py pdfs --batch
+#
+# 格式：每行一个 DOI，空白之后的内容是备注；空行和 # 开头的行忽略。
+# 想试订阅内容和更多出版社，用 tests/fixtures/dois-regression.txt（需要机构登录）。
+
+10.1371/journal.pone.0000308    PLOS ONE
+10.3390/s21051705               MDPI Sensors —— 走第 2 级取件（Akamai 拦跨域 fetch）
+10.3389/fnins.2013.00071        Frontiers
+10.1186/1471-2105-15-135        Springer Nature / BMC
+10.1093/nar/gkag457             OUP NAR —— 走第 3 级取件（inline PDF，不触发下载事件）
+10.1073/pnas.0507655102         PNAS —— URL 无 .pdf 后缀，靠 contentType 判定

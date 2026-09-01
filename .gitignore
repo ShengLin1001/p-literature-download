@@ -2,10 +2,15 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+# AI 生成的分析、交接、计划和汇总文档只留在本机，不进仓库。
+ai-guide/
+
 # 下载结果、浏览器截图和历史测试产物只保留在本机。
 tests/artifacts/
+tmp/
 *.pdf
 
 # 运行时报告。
 browser-get-report.json
+report.json
 *.log

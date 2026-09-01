@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Unified PDF acceptance check for the publisher-official-pdf pipeline.
+"""Unified PDF acceptance check for the p-literature-download pipeline.
 
 A DOI counts as passed only when this verifier accepts the downloaded file:
 header/trailer/size, nonzero page count, first-page text is not a
@@ -19,6 +19,11 @@ import json
 import re
 import sys
 from pathlib import Path
+
+# Run as a script from anywhere; the vendored module below needs no install.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from literature_download import fetch_doi_metadata, is_complete_pdf
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -129,8 +134,6 @@ def verify_pdf(path_pdf, doi=None, fetch_metadata=True):
     if not path_pdf.is_file():
         return stop("file missing")
 
-    from mymetal.academic.search.literature_download import is_complete_pdf
-
     checks["complete_pdf"] = bool(is_complete_pdf(path_pdf))
     if not checks["complete_pdf"]:
         return stop("incomplete pdf (header/EOF/size)")
@@ -154,7 +157,6 @@ def verify_pdf(path_pdf, doi=None, fetch_metadata=True):
     if doi:
         meta = None
         if fetch_metadata:
-            from mymetal.academic.search.literature_download import fetch_doi_metadata
             try:
                 meta = fetch_doi_metadata(doi)
             except Exception:

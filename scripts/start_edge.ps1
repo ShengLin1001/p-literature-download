@@ -9,10 +9,23 @@
 # In Progress" forever. Direct, the same URL downloads instantly.
 param(
     [int]$Port = 9333,
-    [string]$ProfileDir = "$env:USERPROFILE\edge-automation"
+    [string]$ProfileDir = "$env:USERPROFILE\edge-automation",
+    # Landing page of your own institution's WebVPN / SSO. Only a convenience:
+    # log in here once and the cookie stays in this profile. Pass "about:blank"
+    # if your institution needs no VPN.
+    [string]$LoginUrl = "about:blank"
 )
 
-$edge = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+# Edge installs to Program Files (x86) on most machines and Program Files on
+# some; check both rather than failing with a bare "command not found".
+$edge = @(
+    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+    "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $edge) {
+    Write-Error "找不到 msedge.exe，请确认已安装 Microsoft Edge。"
+    exit 1
+}
 $downloads = Join-Path $ProfileDir "downloads"
 $prefsFile = Join-Path $ProfileDir "Default\Preferences"
 New-Item -ItemType Directory -Force -Path $downloads | Out-Null
@@ -38,4 +51,4 @@ if (Test-Path $prefsFile) {
 }
 
 & $edge --remote-debugging-port=$Port --user-data-dir=$ProfileDir --no-proxy-server `
-    --no-first-run --no-default-browser-check "https://webvpn.zju.edu.cn/"
+    --no-first-run --no-default-browser-check $LoginUrl

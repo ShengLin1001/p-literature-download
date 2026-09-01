@@ -5,19 +5,19 @@
 ## 1. 安装依赖
 
 ```powershell
-python -m pip install playwright websocket-client requests pypdf
-python -m pip install -e "F:\BaiduSyncdisk\version20240608\main_code_space\pjvasp_package" --no-deps
+python -m pip install playwright websocket-client pypdf
 ```
+
+就这三个。`scripts/` 下的模块全部只用标准库，**不需要**安装本仓库，也不依赖任何私有包。
 
 `edge_download.py` 只用 Playwright 的 `connect_over_cdp` 去驱动**已经装好的 Edge**，
 不需要 `playwright install` 下载浏览器二进制。
 
-`mymetal.academic.search` 提供两块共享逻辑，脚本直接 import：
-
-- `literature_download` —— DOI 解析、Crossref 元数据、期刊缩写表、文件命名、PDF 完整性；
-- `publisher_pdf` —— 出版商站点知识：页面状态分类、PDF URL host 规则、候选过滤、注入的 JS。
-
-改完这两个模块后，在 `pjvasp_package` 根目录跑 `python tests/test_literature.py` 回归。
+| 包 | 用在哪 |
+|---|---|
+| `playwright` | resolve 阶段驱动 Edge：过 Turnstile、点 cookie 弹窗、走机构登录、读候选链接 |
+| `websocket-client` | 第 4 级取件的裸 CDP 客户端，以及最小化窗口、开后台标签页 |
+| `pypdf` | 验收和落盘后的内容核对，抽前 3 页文本 |
 
 ## 2. 启动专用自动化 Edge
 
@@ -26,7 +26,8 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 ```
 
 用独立 profile `%USERPROFILE%\edge-automation` 启动，带 `--remote-debugging-port=9333`
-和 `--no-proxy-server`。换端口用 `-Port`，换 profile 用 `-ProfileDir`。
+和 `--no-proxy-server`。换端口用 `-Port`，换 profile 用 `-ProfileDir`，
+需要先过 WebVPN 就用 `-LoginUrl "https://webvpn.your-university.edu/"`（默认 `about:blank`）。
 
 不要用日常 Edge 通过 `edge://inspect` 临时开的调试端口：它的 `/json/*` 全部 404，
 且第一个客户端断开后就不再完成 WebSocket 握手。
@@ -45,37 +46,49 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 
 ## 4. 安装 skill
 
-把整个 `publisher-official-pdf` 目录复制到 agent 的 skill 根目录：
+仓库根目录就是 skill 根目录，整个复制过去、改名成 `p-literature-download` 即可：
 
 ```powershell
-Copy-Item -Recurse .\publisher-official-pdf "$env:USERPROFILE\.claude\skills\publisher-official-pdf"
+Copy-Item -Recurse . "$env:USERPROFILE\.claude\skills\p-literature-download"
 ```
 
 Codex 用 `$env:CODEX_HOME\skills`。重启会话后确认能被发现。
 
-## 5. 第一次运行
+配置仓库里更推荐挂成 submodule，这样能收到上游更新：
 
-`dois.txt` 每行一个 DOI，可在空白后附备注；空行和 `#` 开头的行忽略：
-
-```text
-10.1038/nature12373
-10.1103/PhysRevB.88.064104
-10.1016/j.commatsci.2018.12.013
+```bash
+git submodule add git@github.com:ShengLin1001/download_pdf.git \
+    skills-using/root/p-literature-download
+git submodule update --remote skills-using/root/p-literature-download   # 之后拉更新
 ```
 
-先自检，确认能连上 Edge：
+本 skill **只允许显式调用**（`$p-literature-download`）：它会开浏览器、发真实网络请求、
+动用机构会话，不该因为对话里出现 DOI 就自动触发。
+
+## 5. 第一次运行
+
+先跑离线自检，不联网、不开浏览器：
 
 ```powershell
 python <skill目录>\scripts\edge_download.py --selftest
+python <skill目录>\scripts\verify_pdf.py --selftest
 ```
 
-再跑下载与验收：
+再用自带的开放获取样例试真实下载。`examples/dois-sample.txt` 是六篇 OA 文献、
+六家出版社，不需要机构订阅，装好之后应当 **6/6**：
 
 ```powershell
-python <skill目录>\scripts\edge_download.py .\dois.txt -o .\pdfs `
+python <skill目录>\scripts\edge_download.py <skill目录>\examples\dois-sample.txt -o .\pdfs `
     --timeout 180 --skip-existing --report .\pdfs\report.json
 python <skill目录>\scripts\verify_pdf.py .\pdfs --batch
 ```
+
+拿不满 6/6 说明是环境问题（Edge 没起来、走了系统代理、依赖没装），不是权限问题。
+
+完整回归用 `tests/fixtures/dois-regression.txt`（22 篇，覆盖全部出版社与四级取件路径，
+含订阅内容，需要机构会话）。
+
+DOI 文件格式：每行一个 DOI，可在空白后附备注；空行和 `#` 开头的行忽略。
 
 元数据不是 journal-article、文章类型被排除（SnapShot 等）或期刊不在缩写表时，
 脚本在开浏览器**之前**就报告并跳过，不下载。
@@ -88,13 +101,9 @@ python <skill目录>\scripts\verify_pdf.py .\pdfs --batch
 | 挑战永远停在 `Request Verification: In Progress` | 走了系统代理。Cloudflare 判的是出口 IP，`start_edge.ps1` 已带 `--no-proxy-server` |
 | 全部 `no_pdf_link (state paywall)` | 机构会话过期，去自动化 Edge 里重新登录一次 |
 | `state captcha` | hCaptcha 图片题，脚本过不了。加 `--human-wait 120` 由用户点，或跳过 |
+| 偶发一两篇失败 | Cloudflare 抖动或超时。脚本不做轮询，带 `--skip-existing` 重跑同一份列表即可 |
 | PDF 在内置阅读器里打开、拿不到文件 | 正常。**不要**改 `always_open_pdf_externally`，它是受保护偏好，会在启动时被还原；四级取件不依赖它 |
 | 下载到 Supplementary Materials | 候选过滤器应拦掉。新出版商的补充材料命名不同时，往 `publisher_pdf.SUPPLEMENT_PATTERN` 补 |
 | 下到了参考文献里别人的 PDF | 同上，检查 `filter_pdf_candidates`；候选必须含本文 DOI 后缀或页面 URL 里的 PII，都不匹配才回退到同域 |
-| 期刊不在缩写表 | 在 `mymetal/academic/search/literature_download.py` 的 `JOURNAL_ABBREVIATIONS` 补充确认后的通用缩写 |
+| 期刊不在缩写表 | 在 `scripts/literature_download.py` 的 `JOURNAL_ABBREVIATIONS` 补充确认后的通用缩写 |
 | 某出版商改版后取不到 | 先看 `get_page_state` 和 `filter_pdf_candidates` 的输出，再决定加 host 规则还是加取件级别 |
-
-## 7. CloakBrowser 兜底
-
-`scripts/cb_download.py` 保留作兜底，非主路径。用完必须彻底杀掉 chrome 根进程，
-否则残留进程占住服务端座位（免费版单座位），下一次启动会被堵约 5 分钟。

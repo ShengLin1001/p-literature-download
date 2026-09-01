@@ -61,13 +61,20 @@ import time
 import urllib.request
 from pathlib import Path
 
-from mymetal.academic.search.literature_download import (
-    check_journal_metadata, fetch_doi_metadata, generate_pdf_filename, parse_dois)
-from mymetal.academic.search.publisher_pdf import (
+# Run as a script from anywhere: put this file's own directory first, so the
+# vendored modules below resolve without installing anything.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from literature_download import (
+    check_journal_metadata, fetch_doi_metadata, generate_pdf_filename,
+    normalize_doi, parse_dois)
+from publisher_pdf import (
     JS_ACCEPT_CONSENT, JS_FETCH_PDF, JS_FIND_PDF_URLS, JS_IS_PDF_DOCUMENT,
     JS_OPEN_INSTITUTION, JS_PICK_INSTITUTION, JS_READ_CHUNK, JS_TYPE_INSTITUTION,
     check_article_url, check_supplement_url, filter_pdf_candidates,
     get_page_state, get_publisher_pdf_url)
+from verify_pdf import (doi_in_text, looks_like_supplementary, read_pdf,
+                        title_in_text)
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -222,8 +229,7 @@ def check_endpoint(endpoint: str) -> str:
         browser_ws(endpoint)
     except Exception as exc:
         print(f"❌ ERROR: 连不上自动化 Edge（{endpoint}）：{str(exc)[:90]}")
-        print(r"   先启动它：powershell -NoProfile -File "
-              r"publisher-official-pdf\scripts\start_edge.ps1")
+        print(r"   先启动它：powershell -NoProfile -File scripts\start_edge.ps1")
         print("   首次使用还需在弹出的窗口里手动登录一次机构账号（WebVPN / CARSI）。")
         raise SystemExit(1)
     return endpoint
@@ -238,7 +244,7 @@ class RawCdp:
     """
 
     def __init__(self, endpoint: str):
-        import websocket  # websocket-client, present in the scansci-pdf venv
+        import websocket  # pip install websocket-client
         self.ws = websocket.create_connection(browser_ws(endpoint), timeout=30,
                                               suppress_origin=True)
         self.n = 0
@@ -383,9 +389,6 @@ def check_pdf_identity(data: bytes, doi: str, title: str) -> str:
 
     Returns a warning string, or "" when nothing looks wrong.
     """
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from verify_pdf import (doi_in_text, looks_like_supplementary, read_pdf,
-                            title_in_text)
     try:
         _, text = read_pdf(data)
     except Exception as exc:
@@ -656,8 +659,8 @@ def resolve_candidates(endpoint, page, doi, timeout, human_wait):
 def get_output_name(doi):
     """Resolve a DOI to its ``year-JOURNAL-title.pdf`` name, or a skip reason.
 
-    Naming and the journal abbreviation index live in mymetal, so every
-    downloader produces identical filenames. Crossref is queried before the
+    Naming and the journal abbreviation index live in literature_download,
+    so every run produces identical filenames. Crossref is queried before the
     browser opens, which also filters out records this pipeline must not save
     (non-journal types, SnapShots, journals with no abbreviation).
 
@@ -709,11 +712,30 @@ def download_one(endpoint, doi, out_dir, timeout, human_wait, name, title=""):
 
 
 def selftest():
-    """Check the pieces that live here; publisher rules are tested in mymetal."""
+    """Offline check of the orchestration and the two vendored modules."""
+    # page-state classification
     assert get_page_state("<html>Just a moment...</html>", "https://x/") == "cloudflare"
     assert get_page_state("<html/>", "https://x/a/1.pdf") == "pdf_ready"
-    assert cdp_download("http://127.0.0.1:1", [], 1) == (None, "")
-    assert DOWNLOAD_DIR.name == "downloads"
+    assert get_page_state("<html>hcaptcha</html>", "https://x/") == "captcha"
+    assert get_page_state("<html>citation_pdf_url</html>", "https://x/") == "article"
+
+    # host rules: the publishers whose advertised link does not serve the file
+    assert get_publisher_pdf_url(
+        "https://journals.aps.org/prb/abstract/10.1103/PhysRevB.88.064104"
+    ) == "https://journals.aps.org/prb/pdf/10.1103/PhysRevB.88.064104"
+    assert get_publisher_pdf_url("https://example.org/article") is None
+
+    # candidate filtering: supplements and cited papers must never win
+    assert check_supplement_url("https://pubs.acs.org/doi/suppl/10.1/x_si_001.pdf")
+    page_url = "https://example.org/doi/10.1000/abc"
+    assert filter_pdf_candidates(
+        ["https://example.org/doi/suppl/10.1000/abc_si_001.pdf",
+         "https://elsewhere.org/cited-paper.pdf",
+         "https://example.org/doi/pdf/10.1000/abc"],
+        "10.1000/abc", page_url) == ["https://example.org/doi/pdf/10.1000/abc"]
+
+    # DOI parsing and naming
+    assert normalize_doi("https://doi.org/10.1038/nature12373") == "10.1038/nature12373"
     dict_metadata = {
         "type": "journal-article",
         "title": ["Synthesis of bulk hexagonal diamond"],
@@ -721,7 +743,14 @@ def selftest():
         "published-print": {"date-parts": [[2013]]},
     }
     assert generate_pdf_filename(dict_metadata) == "2013-NATURE-Synthesis-o.pdf"
-    print("✅ edge_download selftest ok")
+    assert check_journal_metadata({**dict_metadata, "type": "posted-content"})
+    assert check_journal_metadata(
+        {**dict_metadata, "container-title": ["Journal of Nowhere"]})
+
+    # orchestration
+    assert cdp_download("http://127.0.0.1:1", [], 1) == (None, "")
+    assert DOWNLOAD_DIR.name == "downloads"
+    print("✅ selftest ok")
 
 
 def main():
