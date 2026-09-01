@@ -25,14 +25,20 @@ python -m pip install playwright websocket-client pypdf
 powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 ```
 
-用独立 profile `%USERPROFILE%\edge-automation` 启动，带 `--remote-debugging-port=9333`
-和 `--no-proxy-server`。
+启动一个与日常浏览器完全隔离的 Edge，带 `--remote-debugging-port=9333` 和 `--no-proxy-server`。
+本 skill 的所有本机状态都收在 `~/.pj/p-literature-download/` 下：
+
+```text
+~/.pj/p-literature-download/
+├── profile/     # Edge 的 --user-data-dir，机构登录态在这里
+└── downloads/   # 浏览器下载落地处
+```
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `-Port` | `9333` | CDP 调试端口 |
-| `-ProfileDir` | `%USERPROFILE%\edge-automation` | 独立 profile，登录态存这儿 |
-| `-DownloadDir` | `%USERPROFILE%\.pj\p-literature-download` | Edge 的下载目录，写进 profile 的 Preferences |
+| `-ProfileDir` | `~\.pj\p-literature-download\profile` | 独立 profile，登录态存这儿 |
+| `-DownloadDir` | `~\.pj\p-literature-download\downloads` | Edge 的下载目录，写进 profile 的 Preferences |
 | `-LoginUrl` | `about:blank` | 要先过 WebVPN 就填 `https://webvpn.your-university.edu/` |
 
 脚本会把 `-DownloadDir` 写进 `<profile>\Default\Preferences`，**profile 是全新的也会创建**——

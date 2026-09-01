@@ -9,11 +9,11 @@
 # In Progress" forever. Direct, the same URL downloads instantly.
 param(
     [int]$Port = 9333,
-    [string]$ProfileDir = "$env:USERPROFILE\edge-automation",
+    [string]$ProfileDir = "$env:USERPROFILE\.pj\p-literature-download\profile",
     # Where Edge drops files it downloads. edge_download.py reads this back out
     # of the profile, so changing it here is enough - do not also hard-code it
     # on the Python side.
-    [string]$DownloadDir = "$env:USERPROFILE\.pj\p-literature-download",
+    [string]$DownloadDir = "$env:USERPROFILE\.pj\p-literature-download\downloads",
     # Landing page of your own institution's WebVPN / SSO. Only a convenience:
     # log in here once and the cookie stays in this profile. Leave at the
     # default if your institution needs no VPN.

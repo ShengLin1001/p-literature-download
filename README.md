@@ -34,7 +34,15 @@ python -m pip install playwright websocket-client pypdf
 powershell -NoProfile -File scripts\start_edge.ps1
 ```
 
-会用独立 profile `%USERPROFILE%\edge-automation` 启动 Edge，开调试端口 9333 并**直连**。
+会用独立 profile `%USERPROFILE%\.pj\p-literature-download\profile` 启动 Edge，
+开调试端口 9333 并**直连**。这个 skill 用到的所有本机状态都在 `~/.pj/p-literature-download/` 下：
+
+```text
+~/.pj/p-literature-download/
+├── profile/     # Edge 的 --user-data-dir，你的机构登录态在这里
+└── downloads/   # 浏览器下载落地处
+```
+
 在弹出的窗口里手动登录一次你学校的统一身份认证 / WebVPN / CARSI，cookie 就留在这个
 profile 里，之后每次跑脚本自动复用。
 
@@ -112,7 +120,7 @@ python scripts/edge_download.py dois.txt -o pdfs --preset agent   # 被 agent �
 | `--report` | 每篇写一次 JSON，长跑过程中随时可查 |
 | `--cdp` | CDP 端点，默认 `http://127.0.0.1:9333` |
 | `--human-wait N` | 只在遇到 hCaptcha 图形验证时把标签页弹到前台等 N 秒 |
-| `--profile-dir` | 从哪个 Edge profile 读下载目录，默认 `~/edge-automation` |
+| `--profile-dir` | 从哪个 Edge profile 读下载目录，默认 `~/.pj/p-literature-download/profile` |
 | `--download-dir` | 直接指定要监视的浏览器下载目录 |
 | `--selftest` | 只跑离线自检 |
 
@@ -126,7 +134,7 @@ python scripts/edge_download.py dois.txt -o pdfs --preset agent   # 被 agent �
 但有两条路径依赖它：Elsevier 走的第 4 级取件，以及你手动点「下载」按钮时的接管捕捉。
 
 **落地是 Edge 决定的，所以以 Edge profile 里写的为准。** `start_edge.ps1` 把目录写进
-`<profile>/Default/Preferences`（默认 `~/.pj/p-literature-download`，用 `-DownloadDir` 改），
+`<profile>/Default/Preferences`（默认 `~/.pj/p-literature-download/downloads`，用 `-DownloadDir` 改），
 `edge_download.py` 启动时从同一处读回来并打印。两边对不上的表现是上面那两条路径
 **静默失效**，看起来像出版商的问题——所以启动时那行「浏览器下载目录」值得扫一眼。
 
@@ -199,7 +207,7 @@ git subtree pull --prefix=<你的路径>/p-literature-download \
 ## 安全与合规
 
 - 脚本不读取、不复制、不转发任何密码或 Cookie，登录态只存在于你自己的 Edge profile。
-- **不要**把 `%USERPROFILE%\edge-automation` 这个 profile 复制给别人，它含你的机构会话。
+- **不要**把 `~/.pj/p-literature-download/profile` 复制给别人，它含你的机构会话。
   每位使用者建立自己的 profile。
 - 不要提交 PDF、profile、Cookie、密钥或运行日志（`.gitignore` 已覆盖）。
 - 下载量请自觉控制在个人科研的合理范围内，遵守你所在机构与出版商的使用条款。

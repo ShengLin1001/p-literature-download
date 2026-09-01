@@ -31,6 +31,8 @@
 - AI 生成的分析、阶段、交接和汇总文档只能放入 `ai-guide/`，该目录已 gitignore，不进仓库。
 - 测试输入放 `tests/fixtures/`，对外试跑样例放 `examples/`，生成产物放 `tests/artifacts/`（已 gitignore）。
 - 不提交 PDF、浏览器 profile、cookie、密钥、登录信息、截图、缓存或运行日志。
+- 本机状态一律收在 `~/.pj/p-literature-download/`（`profile/` 放登录态，`downloads/` 放下载），
+  不要再往用户家目录里散落其他目录。
 - 默认 UTF-8；优先复用现有脚本和函数，保持改动最小。
 - 本 skill 只允许显式调用。改 `SKILL.md` 的 frontmatter `description` 或
   `agents/openai.yaml` 的 `policy.allow_implicit_invocation` 时，必须保持这一点。

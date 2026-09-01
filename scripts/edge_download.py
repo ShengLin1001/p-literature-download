@@ -37,7 +37,8 @@ startup. Tiers 1 and 3 are what make that irrelevant.
 Start the browser once and leave it running (see start_edge.ps1):
 
     msedge.exe --remote-debugging-port=9333
-        --user-data-dir=%USERPROFILE%\\edge-automation --no-proxy-server
+        --user-data-dir=%USERPROFILE%\\.pj\\p-literature-download\\profile
+        --no-proxy-server
 
 --no-proxy-server matters as much as the profile: through the system proxy,
 Cloudflare scores the exit IP badly enough to stall the same downloads.
@@ -348,8 +349,9 @@ def get_tab_by_token(context, token: str):
 # is only a default: main() rebinds it from the profile Edge is actually using.
 # Watching the wrong folder makes tier 4 and the manual-download takeover fail
 # silently, which reads like a publisher problem rather than a wrong path.
-PROFILE_DIR = Path.home() / "edge-automation"
-DOWNLOAD_DIR = Path.home() / ".pj" / "p-literature-download"
+PJ_ROOT = Path.home() / ".pj" / "p-literature-download"
+PROFILE_DIR = PJ_ROOT / "profile"        # Edge --user-data-dir: the logged-in session
+DOWNLOAD_DIR = PJ_ROOT / "downloads"     # where Edge drops files
 
 
 def get_download_dir(profile_dir=PROFILE_DIR) -> Path:
@@ -895,7 +897,8 @@ def selftest():
 
     # orchestration
     assert cdp_download("http://127.0.0.1:1", [], 1) == (None, "")
-    assert DOWNLOAD_DIR == Path.home() / ".pj" / "p-literature-download"
+    assert DOWNLOAD_DIR == Path.home() / ".pj" / "p-literature-download" / "downloads"
+    assert PROFILE_DIR.parent == DOWNLOAD_DIR.parent
     assert get_download_dir(Path("no/such/profile")) == DOWNLOAD_DIR
 
     # presets: an explicit flag always beats the preset
@@ -944,7 +947,7 @@ def main():
     ap.add_argument("--cdp", default="http://127.0.0.1:9333",
                     help="CDP endpoint of the automation Edge")
     ap.add_argument("--profile-dir", default=str(PROFILE_DIR),
-                    help="Edge profile to read the download folder from")
+                    help="Edge profile dir to read the download folder from")
     ap.add_argument("--download-dir", default="",
                     help="override the folder watched for browser downloads")
     ap.add_argument("--skip-existing", action="store_true", default=None)
