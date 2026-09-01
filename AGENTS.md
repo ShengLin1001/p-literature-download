@@ -32,7 +32,7 @@
 - 测试输入放 `tests/fixtures/`，对外试跑样例放 `examples/`，生成产物放 `tests/artifacts/`（已 gitignore）。
 - 不提交 PDF、浏览器 profile、cookie、密钥、登录信息、截图、缓存或运行日志。
 - 本机状态一律收在一个 data dir 下（默认 `~/.pj/p-literature-download`）：`profile/` 放
-  登录态，`download/` 放下载。Python 侧是 `--data-dir`，PowerShell 侧是 `-DataDir`，
+  登录态，`download/` 放下载。Python 侧和 PowerShell 侧都叫 `-data_dir`，
   只此一个旋钮；不要再加第二个路径参数，也不要往用户家目录里散落其他目录。
 - 默认 UTF-8；优先复用现有脚本和函数，保持改动最小。
 - 本 skill 只允许显式调用。改 `SKILL.md` 的 frontmatter `description` 或
@@ -43,13 +43,13 @@
 改任意 `scripts/*.py` 之后跑离线自检（不联网、不开浏览器）：
 
 ```bash
-python scripts/edge_download.py --selftest
-python scripts/verify_pdf.py --selftest
+python scripts/edge_download.py -selftest
+python scripts/verify_pdf.py -selftest
 ```
 
 真实官网回归用 `examples/dois-sample.txt`（全开放获取，应当满分）或
 `tests/fixtures/dois-regression.txt`（22 篇全出版社矩阵，需机构会话），
-再用 `verify_pdf.py <dir> --batch` 验收；结果与自检分开报告。
+再用 `verify_pdf.py <dir> -batch` 验收；结果与自检分开报告。
 
 单个 DOI 记为 pass 当且仅当：本轮真实落盘 + `%PDF` 头 / `%%EOF` 尾 / 页数 > 0 +
 DOI 或标题与 Crossref 匹配 + 非补充材料。进入登录页、点击成功、自检通过都不算。

@@ -1,7 +1,7 @@
 """Reusable DOI metadata, journal abbreviation, and PDF filename helpers.
 
 Stdlib only, so the skill needs no package installed to run. Covered by
-``python scripts/edge_download.py --selftest``.
+``python scripts/edge_download.py -selftest``.
 
 Functions:
     normalize_doi: Strip DOI URL and ``doi:`` prefixes.

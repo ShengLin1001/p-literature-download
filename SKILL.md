@@ -41,10 +41,10 @@ python -m pip install playwright websocket-client pypdf
 powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 ```
 
-本机状态全部收在一个 `-DataDir` 下（默认 `%USERPROFILE%\.pj\p-literature-download`）：
+本机状态全部收在一个 `-data_dir` 下（默认 `%USERPROFILE%\.pj\p-literature-download`）：
 
 ```text
-~/.pj/p-literature-download/     # --data-dir，一个参数管住全部本机状态
+~/.pj/p-literature-download/     # -data_dir，一个参数管住全部本机状态
 ├── profile/     # Edge 的 --user-data-dir，你的机构登录态在这里
 └── download/    # 浏览器下载落地处
 ```
@@ -74,44 +74,44 @@ Edge 带三个必需参数启动：
 
 DOI 文件每行一个 DOI，可在空白后附备注；空行和 `#` 开头的行忽略。
 
-**agent 跑批一律加 `--preset agent`**，它把该关的都关了：
+**agent 跑批一律加 `-preset agent`**，它把该关的都关了：
 
 ```bash
-python <skill目录>/scripts/edge_download.py <DOI列表> -o pdfs --preset agent
+python <skill目录>/scripts/edge_download.py <DOI列表> -output pdfs -preset agent
 ```
 
 先用自带的开放获取样例确认环境正常（六篇、六家出版社，不需要机构订阅，应当 6/6）：
 
 ```bash
-python <skill目录>/scripts/edge_download.py <skill目录>/examples/dois-sample.txt -o pdfs --preset agent
+python <skill目录>/scripts/edge_download.py <skill目录>/examples/dois-sample.txt -output pdfs -preset agent
 ```
 
 ### preset
 
-| | `--preset agent` | `--preset human` |
+| | `-preset agent` | `-preset human` |
 |---|---|---|
-| `--retries` | **0** —— agent 看到失败自己重跑，脚本再轮询就是双重重试 | **2** —— 人跑没有外层循环，得自己兜 |
-| `--human-wait` | **0** —— agent 过不了图形验证码，弹窗口没意义 | **120** —— 人在旁边，能点 |
-| `--skip-existing` | 开 | 开 |
-| `--report` | 自动写到 `<输出目录>/report.json` | 同左 |
-| `--timeout` | 300 | 300 |
+| `-retries` | **0** —— agent 看到失败自己重跑，脚本再轮询就是双重重试 | **2** —— 人跑没有外层循环，得自己兜 |
+| `-human_wait` | **0** —— agent 过不了图形验证码，弹窗口没意义 | **120** —— 人在旁边，能点 |
+| `-skip_existing` | 开 | 开 |
+| `-report` | 自动写到 `<输出目录>/report.json` | 同左 |
+| `-timeout` | 300 | 300 |
 
-显式写在命令行上的开关**永远压过 preset**，例如 `--preset human --retries 0`。
+显式写在命令行上的开关**永远压过 preset**，例如 `-preset human -retries 0`。
 
 ### 全部开关
 
 | 开关 | 含义 |
 |---|---|
-| `-o/--output` | PDF 输出目录 |
-| `--preset` | `agent` / `human`，见上表 |
-| `--retries N` | 第一遍跑完后，把失败的再走 N 轮（默认 0）。轮次之间退避 45s |
-| `--timeout` | 每篇每阶段秒数上限（默认 300）。20 MB 以上的综述在 180s 下会失败 |
-| `--skip-existing` | 已有同名文件就跳过，用于补跑 |
-| `--report` | 每篇写一次 JSON，长跑过程中可随时查看 |
-| `--cdp` | CDP 端点（默认 `http://127.0.0.1:9333`） |
-| `--human-wait N` | **只**在遇到 hCaptcha / reCAPTCHA 图形验证时把标签页弹到前台等 N 秒。Cloudflare 一律由脚本自己拟人化点击通过，不打扰用户 |
-| `--data-dir` | 本机状态根目录（默认 `~/.pj/p-literature-download`），下辖 `profile/` 与 `download/` |
-| `--selftest` | 只跑离线自检，不联网、不下载 |
+| `-output` | PDF 输出目录 |
+| `-preset` | `agent` / `human`，见上表 |
+| `-retries N` | 第一遍跑完后，把失败的再走 N 轮（默认 0）。轮次之间退避 45s |
+| `-timeout` | 每篇每阶段秒数上限（默认 300）。20 MB 以上的综述在 180s 下会失败 |
+| `-skip_existing` | 已有同名文件就跳过，用于补跑 |
+| `-report` | 每篇写一次 JSON，长跑过程中可随时查看 |
+| `-cdp` | CDP 端点（默认 `http://127.0.0.1:9333`） |
+| `-human_wait N` | **只**在遇到 hCaptcha / reCAPTCHA 图形验证时把标签页弹到前台等 N 秒。Cloudflare 一律由脚本自己拟人化点击通过，不打扰用户 |
+| `-data_dir` | 本机状态根目录（默认 `~/.pj/p-literature-download`），下辖 `profile/` 与 `download/` |
+| `-selftest` | 只跑离线自检，不联网、不下载 |
 
 ### 重试的口径
 
@@ -126,10 +126,10 @@ python <skill目录>/scripts/edge_download.py <skill目录>/examples/dois-sample
 脚本启动时先检查 Edge 是否可连；连不上直接报错退出，不会白跑整个列表。
 
 跑批时窗口会被最小化，且每个标签页都以后台方式创建，不会反复弹到桌面上挡住你手头的事。
-只有 `--human-wait` 遇到图形验证码时才会把窗口恢复出来让你操作。
+只有 `-human_wait` 遇到图形验证码时才会把窗口恢复出来让你操作。
 
-**失败重跑**：`--preset agent` 下脚本只跑一遍。agent 看到失败自己重跑即可
-（`--skip-existing` 已经开着，成功的不会重下）；偶发失败多半是 Cloudflare 抖动或超时。
+**失败重跑**：`-preset agent` 下脚本只跑一遍。agent 看到失败自己重跑即可
+（`-skip_existing` 已经开着，成功的不会重下）；偶发失败多半是 Cloudflare 抖动或超时。
 
 ### 人工接管（常开，不需要任何开关）
 
@@ -150,7 +150,7 @@ resolve 循环每几秒重读一次所有标签页，所以：
 监视的是哪个目录？**以 Edge profile 里写的为准，不是脚本里的常量。**
 `start_edge.ps1` 把下载目录写进 `<data-dir>/profile/Default/Preferences`（默认
 `~/.pj/p-literature-download/download`），`edge_download.py` 启动时再从同一处读回来并打印出来。
-落地是 Edge 干的，所以只能问 Edge；脚本这边写死一个常量，别人一改 `-DataDir`
+落地是 Edge 干的，所以只能问 Edge；脚本这边写死一个常量，别人一改 `-data_dir`
 就对不上，而对不上的表现是第 4 级取件和手动下载捕捉**静默失效**，看起来像出版商的问题。
 
 > ⚠️ **跑批期间不要在这个自动化 Edge 窗口里打开与本次任务无关的 PDF。**
@@ -187,7 +187,7 @@ resolve 循环每几秒重读一次所有标签页，所以：
 ## 四、验收
 
 ```bash
-python <skill目录>/scripts/verify_pdf.py <目录> --batch
+python <skill目录>/scripts/verify_pdf.py <目录> -batch
 ```
 
 单个 DOI 记为 **pass** 当且仅当全部满足：
@@ -198,7 +198,7 @@ python <skill目录>/scripts/verify_pdf.py <目录> --batch
 - 首页不是补充材料；
 - 文件名符合上面的命名规则。
 
-进入登录页、点击成功、`--selftest` 通过，都**不算** pass。
+进入登录页、点击成功、`-selftest` 通过，都**不算** pass。
 
 ## 五、原理：为什么是这个结构
 
@@ -224,14 +224,14 @@ python <skill目录>/scripts/verify_pdf.py <目录> --batch
 | 连不上 Edge | 没跑 `start_edge.ps1`，或 Edge 被关了。**永远不要**对 CDP 连接调 `browser.close()`，那会拆掉 DevTools 服务端 |
 | 挑战永远停在 "Request Verification: In Progress" | 开了系统代理。`start_edge.ps1` 已带 `--no-proxy-server`，确认没被绕过 |
 | 全部 `no_pdf_link (state paywall)` | 机构登录掉了，去自动化 Edge 里重新登录一次 |
-| `state captcha` | hCaptcha 图形验证，脚本过不了。加 `--human-wait 120` 由用户点，或直接拉出窗口自己过——接管常开 |
+| `state captcha` | hCaptcha 图形验证，脚本过不了。加 `-human_wait 120` 由用户点，或直接拉出窗口自己过——接管常开 |
 | 我手动开了 PDF 但没被认到 | 确认开在同一个自动化 Edge 里；补充材料链接会被故意忽略 |
 | 末尾报「内容核对未通过」 | 只是提示，文件已保留。老文献扫描件、OCR 失真的标题都会触发，自己打开确认即可 |
 | 跑批时 Edge 一直弹到桌面上 | 该版本已修复：标签页用 `Target.createTarget` 的 `background` 标志创建，窗口每轮最小化一次。注意 Windows 会把负窗口坐标夹回 (0,0)，离屏摆放没用 |
 | PDF 在内置阅读器里打开、拿不到文件 | 正常，级别 1 和 3 不依赖下载。**不要**去改 `always_open_pdf_externally`，它是受保护偏好，改了会被启动时还原 |
 | 日志出现 `↩️ 偏离到 …，退回 DOI 重来` | 正常自愈。页面跑到了非本文页（APS 的 `/prb/accepted`、SSO wayfinder 等），脚本退回 DOI 重来，最多两次 |
-| 大文件（20 MB 以上）报 `fetch_failed` | 超时不够。`--timeout 240` 起步，RSC 综述这类要走第 3 级取件 |
-| 偶发一两篇失败 | Cloudflare 抖动或超时。agent 直接重跑（`--preset agent` 已带 `--skip-existing`）；人跑用 `--preset human`，自带 2 轮重试 |
+| 大文件（20 MB 以上）报 `fetch_failed` | 超时不够。`-timeout 240` 起步，RSC 综述这类要走第 3 级取件 |
+| 偶发一两篇失败 | Cloudflare 抖动或超时。agent 直接重跑（`-preset agent` 已带 `-skip_existing`）；人跑用 `-preset human`，自带 2 轮重试 |
 | Elsevier 一直 `fetch_failed`，或手动点的下载没被认到 | 多半是下载目录对不上。看启动时打印的「浏览器下载目录」，跟 Edge 里 `edge://settings/downloads` 显示的是不是同一个；不是就重跑一次 `start_edge.ps1` |
 | 某出版商改版后取不到 | 先跑诊断：打开文章页看 `get_page_state` 和 `filter_pdf_candidates` 的输出，再决定是加 host 规则还是加取件级别 |
 
@@ -260,8 +260,8 @@ python <skill目录>/scripts/verify_pdf.py <目录> --batch
 改完任意一个，跑离线自检：
 
 ```bash
-python <skill目录>/scripts/edge_download.py --selftest
-python <skill目录>/scripts/verify_pdf.py --selftest
+python <skill目录>/scripts/edge_download.py -selftest
+python <skill目录>/scripts/verify_pdf.py -selftest
 ```
 
 自检不联网、不开浏览器，覆盖页面状态分类、host 规则、候选过滤、DOI 解析和命名。

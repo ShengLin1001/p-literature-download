@@ -4,7 +4,7 @@ Everything here is browser-agnostic: URL rules, page-state classification,
 candidate filtering, and the JavaScript snippets a driver injects. The
 browser driving itself stays in the download orchestrator, so the same
 knowledge can back any driver. Stdlib only; covered by
-``python scripts/edge_download.py --selftest``.
+``python scripts/edge_download.py -selftest``.
 
 Functions:
     get_page_state: Classify a publisher page from its HTML and final URL.

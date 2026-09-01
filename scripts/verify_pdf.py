@@ -8,9 +8,9 @@ supplementary-materials document, and the extracted DOI or normalized title
 matches the requested DOI's Crossref metadata.
 
 Usage:
-    python verify_pdf.py <file.pdf> [--doi 10.xxxx/yyyy] [--json]
-    python verify_pdf.py <dir> --batch [--json]     # verify every *.pdf
-    python verify_pdf.py --selftest
+    python verify_pdf.py <file.pdf> [-doi 10.xxxx/yyyy] [-json]
+    python verify_pdf.py <dir> -batch [-json]     # verify every *.pdf
+    python verify_pdf.py -selftest
 """
 
 import argparse
@@ -194,11 +194,11 @@ def selftest():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("target", nargs="?", help="PDF file or directory (with --batch)")
-    ap.add_argument("--doi", help="expected DOI for identity check")
-    ap.add_argument("--batch", action="store_true", help="verify all *.pdf in target dir")
-    ap.add_argument("--json", action="store_true", help="print JSON results")
-    ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("target", nargs="?", help="PDF file or directory (with -batch)")
+    ap.add_argument("-doi", help="expected DOI for identity check")
+    ap.add_argument("-batch", action="store_true", help="verify all *.pdf in target dir")
+    ap.add_argument("-json", action="store_true", help="print JSON results")
+    ap.add_argument("-selftest", action="store_true")
     args = ap.parse_args()
     if args.selftest:
         selftest()

@@ -3,8 +3,8 @@
 # 全部不需要机构订阅，所以第一次装完就该拿到 6/6；拿不满说明是环境问题
 # （Edge 没起来、走了系统代理、依赖没装），不是权限问题。
 #
-#     python scripts/edge_download.py examples/dois-sample.txt -o pdfs --skip-existing
-#     python scripts/verify_pdf.py pdfs --batch
+#     python scripts/edge_download.py examples/dois-sample.txt -output pdfs -skip_existing
+#     python scripts/verify_pdf.py pdfs -batch
 #
 # 格式：每行一个 DOI，空白之后的内容是备注；空行和 # 开头的行忽略。
 # 想试订阅内容和更多出版社，用 tests/fixtures/dois-regression.txt（需要机构登录）。

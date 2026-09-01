@@ -21,7 +21,7 @@ tried in order, cheapest first:
 
 Every tab is created in the background and the window is minimized once per
 run, so a batch does not keep raising Edge onto the user's desktop. Only
---human-wait restores it, because a captcha has to be visible to be solved.
+-human_wait restores it, because a captcha has to be visible to be solved.
 
 Manual takeover is always available and needs no flag. Restore the window
 whenever you like and drive it yourself: the resolve loop re-reads every tab
@@ -40,7 +40,7 @@ Start the browser once and leave it running (see start_edge.ps1):
         --user-data-dir=%USERPROFILE%\\.pj\\p-literature-download\\profile
         --no-proxy-server
 
-All local state lives under one --data-dir (default ~/.pj/p-literature-download):
+All local state lives under one -data_dir (default ~/.pj/p-literature-download):
 profile/ for the logged-in Edge session, download/ for what Edge drops.
 
 --no-proxy-server matters as much as the profile: through the system proxy,
@@ -50,9 +50,9 @@ The daily Edge's runtime-enabled port (edge://inspect) is not usable here: it
 serves no /json/* endpoints and stops accepting WebSocket handshakes after
 the first client disconnects.
 
-Two presets cover the callers. --preset agent turns in-script retries and the
+Two presets cover the callers. -preset agent turns in-script retries and the
 captcha prompt off, because an agent reruns the script itself on failure and
-cannot solve an image captcha either way; --preset human turns both on, because
+cannot solve an image captcha either way; -preset human turns both on, because
 a person running this by hand has no outer loop. An explicit flag beats both.
 
 The folder watched for browser downloads is read from the Edge profile rather
@@ -60,9 +60,9 @@ than assumed: Edge decides where a file lands, and watching the wrong folder
 makes tier 4 and the manual-download takeover fail without saying anything.
 
 Usage:
-    python edge_download.py dois.txt -o outdir --preset agent
-    python edge_download.py dois.txt -o outdir --preset human
-    python edge_download.py --selftest
+    python edge_download.py dois.txt -output outdir -preset agent
+    python edge_download.py dois.txt -output outdir -preset human
+    python edge_download.py -selftest
 """
 
 import argparse
@@ -293,7 +293,7 @@ def set_window_state(endpoint: str, state: str) -> None:
     this script opens passes Target.createTarget's ``background`` flag and the
     window is minimized once per run. Windows clamps a negative window
     position back to (0, 0), so moving the window off-screen is not an option.
-    Restoring is only for the ``--human-wait`` path, where the user has to see
+    Restoring is only for the ``-human_wait`` path, where the user has to see
     the captcha to solve it.
 
     Some page targets carry no window at all (edge://downloads-hub is one), so
@@ -348,9 +348,9 @@ def get_tab_by_token(context, token: str):
     return context.new_page()  # window pops up, but the run still works
 
 
-# One knob for every bit of local state this skill keeps: --data-dir, holding
+# One knob for every bit of local state this skill keeps: -data_dir, holding
 # profile/ (the logged-in Edge session) and download/ (where Edge drops files).
-# start_edge.ps1 takes the same -DataDir and lays out the same two names.
+# start_edge.ps1 takes the same -data_dir and lays out the same two names.
 DATA_DIR = Path.home() / ".pj" / "p-literature-download"
 PROFILE_DIR = DATA_DIR / "profile"
 DOWNLOAD_DIR = DATA_DIR / "download"
@@ -796,7 +796,7 @@ def apply_preset(args):
     return args
 
 
-def write_report(path_report, ldoi, dresult):
+def write_report(path_report, ldoi, dict_result):
     """Rewrite the whole report, in input order, one entry per DOI.
 
     Appending would put a retried DOI in the file twice, which silently breaks
@@ -805,7 +805,7 @@ def write_report(path_report, ldoi, dresult):
     if not path_report:
         return
     Path(path_report).parent.mkdir(parents=True, exist_ok=True)
-    lordered = [dresult[doi] for doi in ldoi if doi in dresult]
+    lordered = [dict_result[doi] for doi in ldoi if doi in dict_result]
     Path(path_report).write_text(
         json.dumps(lordered, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -840,15 +840,15 @@ def download_doi(args, doi, out_dir, label):
 def download_batch(args, ldoi, out_dir):
     """Run the list, then re-run only what failed. Results in input order.
 
-    Off by default (--retries 0): under an agent the outer loop already is the
+    Off by default (-retries 0): under an agent the outer loop already is the
     retry, and doubling it wastes time and publisher goodwill. A person running
-    this by hand has no outer loop, which is what --preset human turns it on
+    this by hand has no outer loop, which is what -preset human turns it on
     for.
     """
-    dresult = {}
+    dict_result = {}
     for attempt in range(max(0, args.retries) + 1):
         lpending = [doi for doi in ldoi
-                    if dresult.get(doi, {}).get("status", "failed") in SRETRIABLE]
+                    if dict_result.get(doi, {}).get("status", "failed") in SRETRIABLE]
         if not lpending:
             break
         if attempt:
@@ -858,9 +858,9 @@ def download_batch(args, ldoi, out_dir):
         for i, doi in enumerate(lpending, 1):
             res = download_doi(args, doi, out_dir, f"[{i}/{len(lpending)}]")
             res["attempts"] = attempt + 1
-            dresult[doi] = res
-            write_report(args.report, ldoi, dresult)
-    return [dresult[doi] for doi in ldoi]
+            dict_result[doi] = res
+            write_report(args.report, ldoi, dict_result)
+    return [dict_result[doi] for doi in ldoi]
 
 
 def selftest():
@@ -935,26 +935,26 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("dois", nargs="?", help="DOI list file")
-    ap.add_argument("-o", "--output", default=".")
-    ap.add_argument("--preset", choices=sorted(PRESETS),
+    ap.add_argument("-output", default=".")
+    ap.add_argument("-preset", choices=sorted(PRESETS),
                     help="agent: no in-script retry, no captcha prompt, because "
                          "the agent reruns on failure. human: 2 retries, 120s "
                          "captcha wait. An explicit flag overrides the preset.")
-    ap.add_argument("--timeout", type=int, default=None,
+    ap.add_argument("-timeout", type=int, default=None,
                     help="seconds per stage per DOI (default 300); a 20MB+ review "
                          "needs well over 180")
-    ap.add_argument("--retries", type=int, default=None,
+    ap.add_argument("-retries", type=int, default=None,
                     help="extra passes over the DOIs that failed (default 0)")
-    ap.add_argument("--human-wait", type=int, default=None,
+    ap.add_argument("-human_wait", type=int, default=None,
                     help="extra seconds granted after surfacing the tab on a captcha")
-    ap.add_argument("--cdp", default="http://127.0.0.1:9333",
+    ap.add_argument("-cdp", default="http://127.0.0.1:9333",
                     help="CDP endpoint of the automation Edge")
-    ap.add_argument("--data-dir", default=str(DATA_DIR),
+    ap.add_argument("-data_dir", default=str(DATA_DIR),
                     help="local state root; holds profile/ and download/ "
                          f"(default {DATA_DIR})")
-    ap.add_argument("--skip-existing", action="store_true", default=None)
-    ap.add_argument("--report", default="")
-    ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("-skip_existing", action="store_true", default=None)
+    ap.add_argument("-report", default="")
+    ap.add_argument("-selftest", action="store_true")
     args = apply_preset(ap.parse_args())
     if args.selftest:
         return selftest()

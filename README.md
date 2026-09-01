@@ -38,7 +38,7 @@ powershell -NoProfile -File scripts\start_edge.ps1
 开调试端口 9333 并**直连**。这个 skill 用到的所有本机状态都在 `~/.pj/p-literature-download/` 下：
 
 ```text
-~/.pj/p-literature-download/     # --data-dir，一个参数管住全部本机状态
+~/.pj/p-literature-download/     # -data_dir，一个参数管住全部本机状态
 ├── profile/     # Edge 的 --user-data-dir，你的机构登录态在这里
 └── download/    # 浏览器下载落地处
 ```
@@ -52,10 +52,10 @@ profile 里，之后每次跑脚本自动复用。
 需要先过 WebVPN 的话，直接把登录页当参数传进去，省得自己敲网址：
 
 ```powershell
-powershell -NoProfile -File scripts\start_edge.ps1 -LoginUrl "https://webvpn.your-university.edu/"
+powershell -NoProfile -File scripts\start_edge.ps1 -login_url "https://webvpn.your-university.edu/"
 ```
 
-换个位置放这些状态就传 `-DataDir`，Python 那边传同名的 `--data-dir`，两边只有这一个旋钮。
+换个位置放这些状态就传 `-data_dir`，`edge_download.py` 那边是同名的开关，两边只有这一个旋钮。
 
 换学校还要改 `scripts/edge_download.py` 顶部的 `INSTITUTION`（默认 `"Zhejiang University"`），
 它用来在出版商的「Access through your institution」下拉框里匹配机构名。
@@ -63,8 +63,8 @@ powershell -NoProfile -File scripts\start_edge.ps1 -LoginUrl "https://webvpn.you
 ### 3. 先跑离线自检
 
 ```bash
-python scripts/edge_download.py --selftest
-python scripts/verify_pdf.py --selftest
+python scripts/edge_download.py -selftest
+python scripts/verify_pdf.py -selftest
 ```
 
 不联网、不开浏览器，只验证代码本身。
@@ -76,8 +76,8 @@ python scripts/verify_pdf.py --selftest
 依赖没装），不是权限问题。
 
 ```bash
-python scripts/edge_download.py examples/dois-sample.txt -o pdfs --preset human
-python scripts/verify_pdf.py pdfs --batch
+python scripts/edge_download.py examples/dois-sample.txt -output pdfs -preset human
+python scripts/verify_pdf.py pdfs -batch
 ```
 
 ### 5. 换成你自己的 DOI 列表
@@ -94,11 +94,11 @@ python scripts/verify_pdf.py pdfs --batch
 绝大多数情况下你只需要记住这两个之一：
 
 ```bash
-python scripts/edge_download.py dois.txt -o pdfs --preset human   # 人自己跑
-python scripts/edge_download.py dois.txt -o pdfs --preset agent   # 被 agent 调用
+python scripts/edge_download.py dois.txt -output pdfs -preset human   # 人自己跑
+python scripts/edge_download.py dois.txt -output pdfs -preset agent   # 被 agent 调用
 ```
 
-| | `--preset human` | `--preset agent` |
+| | `-preset human` | `-preset agent` |
 |---|---|---|
 | 失败重试 | **2 轮**（轮次间退避 45s） | **0 轮** |
 | 验证码 | 弹窗口等你 120s | 不弹 |
@@ -108,22 +108,22 @@ python scripts/edge_download.py dois.txt -o pdfs --preset agent   # 被 agent �
 脚本再轮询一遍就是双重重试，白白多花时间、多敲出版商的门；而且 agent 也解不了
 图形验证码，把窗口弹出来没有意义。人自己跑没有这个外层循环，所以两件事都得自己来。
 
-显式写在命令行上的开关**永远压过 preset**，比如 `--preset human --retries 0`。
+显式写在命令行上的开关**永远压过 preset**，比如 `-preset human -retries 0`。
 
 ## 全部开关
 
 | 开关 | 含义 |
 |---|---|
-| `-o/--output` | PDF 输出目录 |
-| `--preset` | `human` / `agent`，见上 |
-| `--retries N` | 第一遍跑完后，把失败的再走 N 轮（默认 0） |
-| `--timeout` | 每篇每阶段秒数上限（默认 300）。20 MB 以上的综述在 180s 下会失败 |
-| `--skip-existing` | 已有同名文件就跳过，补跑时用 |
-| `--report` | 每篇写一次 JSON，长跑过程中随时可查 |
-| `--cdp` | CDP 端点，默认 `http://127.0.0.1:9333` |
-| `--human-wait N` | 只在遇到 hCaptcha 图形验证时把标签页弹到前台等 N 秒 |
-| `--data-dir` | 本机状态根目录，默认 `~/.pj/p-literature-download`，下辖 `profile/` 与 `download/` |
-| `--selftest` | 只跑离线自检 |
+| `-output` | PDF 输出目录 |
+| `-preset` | `human` / `agent`，见上 |
+| `-retries N` | 第一遍跑完后，把失败的再走 N 轮（默认 0） |
+| `-timeout` | 每篇每阶段秒数上限（默认 300）。20 MB 以上的综述在 180s 下会失败 |
+| `-skip_existing` | 已有同名文件就跳过，补跑时用 |
+| `-report` | 每篇写一次 JSON，长跑过程中随时可查 |
+| `-cdp` | CDP 端点，默认 `http://127.0.0.1:9333` |
+| `-human_wait N` | 只在遇到 hCaptcha 图形验证时把标签页弹到前台等 N 秒 |
+| `-data_dir` | 本机状态根目录，默认 `~/.pj/p-literature-download`，下辖 `profile/` 与 `download/` |
+| `-selftest` | 只跑离线自检 |
 
 只有 `failed` / `no_pdf_link` / `fetch_failed` / `error` 会被重试。
 `unsupported`（不是期刊论文、期刊没缩写）和 `skipped`（已经下过）是确定性结论，
@@ -188,7 +188,7 @@ Copy-Item -Recurse . "$env:USERPROFILE\.claude\skills\p-literature-download"
 
 Codex 用 `$env:CODEX_HOME\skills`。
 
-> ⚠️ **不要用 `npx skills add ShengLin1001/download_pdf`。** 实测过：当仓库根目录本身
+> ⚠️ **不要用 `npx skills add ShengLin1001/p-literature-download`。** 实测过：当仓库根目录本身
 > 就是 skill 时，那个 CLI 只会装走 `SKILL.md`，`scripts/` 一个文件都不带，装完是个空壳。
 > 它只对「skill 位于仓库子目录」的布局才拷贝完整目录。
 
@@ -197,9 +197,9 @@ submodule 存的是指针，别人克隆你的配置仓库会得到一个空目�
 
 ```bash
 git subtree add  --prefix=<你的路径>/p-literature-download \
-    git@github.com:ShengLin1001/download_pdf.git main --squash
+    git@github.com:ShengLin1001/p-literature-download.git main --squash
 git subtree pull --prefix=<你的路径>/p-literature-download \
-    git@github.com:ShengLin1001/download_pdf.git main --squash   # 之后拉更新
+    git@github.com:ShengLin1001/p-literature-download.git main --squash   # 之后拉更新
 ```
 
 该 skill **只允许显式调用**（`$p-literature-download`），不会因为对话里出现 DOI 或

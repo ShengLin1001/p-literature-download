@@ -29,16 +29,16 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 本 skill 的所有本机状态都收在 `~/.pj/p-literature-download/` 下：
 
 ```text
-~/.pj/p-literature-download/     # --data-dir，一个参数管住全部本机状态
+~/.pj/p-literature-download/     # -data_dir，一个参数管住全部本机状态
 ├── profile/     # Edge 的 --user-data-dir，你的机构登录态在这里
 └── download/    # 浏览器下载落地处
 ```
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `-Port` | `9333` | CDP 调试端口 |
-| `-DataDir` | `~\.pj\p-literature-download` | 本机状态根目录，下辖 `profile\` 与 `download\` |
-| `-LoginUrl` | `about:blank` | 要先过 WebVPN 就填 `https://webvpn.your-university.edu/` |
+| `-port` | `9333` | CDP 调试端口 |
+| `-data_dir` | `~\.pj\p-literature-download` | 本机状态根目录，下辖 `profile\` 与 `download\` |
+| `-login_url` | `about:blank` | 要先过 WebVPN 就填 `https://webvpn.your-university.edu/` |
 
 脚本会把 `<DataDir>\download` 写进 `<DataDir>\profile\Default\Preferences`，
 **profile 是全新的也会创建**——
@@ -57,7 +57,7 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 - 验证：随便打开一篇订阅文献，页面上应出现「Access provided by 你的学校」；
 - 不要把该 profile 复制给别人，它含 Cookie 与机构会话。每位使用者建立自己的 profile；
 - 换学校要改 `scripts/edge_download.py` 顶部的 `INSTITUTION`；
-- 遇到 hCaptcha 图片题时脚本过不了，由用户本人处理（`--human-wait N` 会把标签页弹到前台）。
+- 遇到 hCaptcha 图片题时脚本过不了，由用户本人处理（`-human_wait N` 会把标签页弹到前台）。
   Cloudflare Turnstile 一律由脚本拟人化点击通过，不打扰用户。
 - **跑批期间不要在这个自动化 Edge 窗口里打开无关 PDF**，会被当成当前这篇抓走。
   临时看文献用自己的日常 Edge。详见 SKILL.md 的「人工接管」小节。
@@ -72,16 +72,16 @@ Copy-Item -Recurse . "$env:USERPROFILE\.claude\skills\p-literature-download"
 
 Codex 用 `$env:CODEX_HOME\skills`。重启会话后确认能被发现。
 
-**不要用 `npx skills add ShengLin1001/download_pdf`**：仓库根目录本身是 skill 时，
+**不要用 `npx skills add ShengLin1001/p-literature-download`**：仓库根目录本身是 skill 时，
 那个 CLI 只装 `SKILL.md`，`scripts/` 全丢，装完是空壳（实测确认）。
 
 要在配置仓库里长期维护并接收上游更新，用 **git subtree**：
 
 ```bash
 git subtree add  --prefix=skills-using/root/p-literature-download \
-    git@github.com:ShengLin1001/download_pdf.git main --squash
+    git@github.com:ShengLin1001/p-literature-download.git main --squash
 git subtree pull --prefix=skills-using/root/p-literature-download \
-    git@github.com:ShengLin1001/download_pdf.git main --squash   # 之后拉更新
+    git@github.com:ShengLin1001/p-literature-download.git main --squash   # 之后拉更新
 ```
 
 不要用 submodule：它存的是指针不是文件，`npx skills add` 克隆配置仓库时不带
@@ -95,20 +95,20 @@ git subtree pull --prefix=skills-using/root/p-literature-download \
 先跑离线自检，不联网、不开浏览器：
 
 ```powershell
-python <skill目录>\scripts\edge_download.py --selftest
-python <skill目录>\scripts\verify_pdf.py --selftest
+python <skill目录>\scripts\edge_download.py -selftest
+python <skill目录>\scripts\verify_pdf.py -selftest
 ```
 
 再用自带的开放获取样例试真实下载。`examples/dois-sample.txt` 是六篇 OA 文献、
 六家出版社，不需要机构订阅，装好之后应当 **6/6**：
 
 ```powershell
-python <skill目录>\scripts\edge_download.py <skill目录>\examples\dois-sample.txt -o .\pdfs --preset human
-python <skill目录>\scripts\verify_pdf.py .\pdfs --batch
+python <skill目录>\scripts\edge_download.py <skill目录>\examples\dois-sample.txt -output .\pdfs -preset human
+python <skill目录>\scripts\verify_pdf.py .\pdfs -batch
 ```
 
-`--preset human` = 失败重试 2 轮 + 验证码弹窗口等 120s + 跳过已有 + 自动写报告。
-被 agent 调用时改用 `--preset agent`：不重试（agent 自己会重跑）、不弹验证码窗口。
+`-preset human` = 失败重试 2 轮 + 验证码弹窗口等 120s + 跳过已有 + 自动写报告。
+被 agent 调用时改用 `-preset agent`：不重试（agent 自己会重跑）、不弹验证码窗口。
 
 拿不满 6/6 说明是环境问题（Edge 没起来、走了系统代理、依赖没装），不是权限问题。
 
@@ -127,8 +127,8 @@ DOI 文件格式：每行一个 DOI，可在空白后附备注；空行和 `#` �
 | 连不上 `127.0.0.1:9333` | 没跑 `start_edge.ps1`，或 Edge 被关了。代码里**永远不要**对 CDP 连接调 `browser.close()`，那会拆掉 DevTools 服务端 |
 | 挑战永远停在 `Request Verification: In Progress` | 走了系统代理。Cloudflare 判的是出口 IP，`start_edge.ps1` 已带 `--no-proxy-server` |
 | 全部 `no_pdf_link (state paywall)` | 机构会话过期，去自动化 Edge 里重新登录一次 |
-| `state captcha` | hCaptcha 图片题，脚本过不了。加 `--human-wait 120` 由用户点，或跳过 |
-| 偶发一两篇失败 | Cloudflare 抖动或超时。`--preset human` 自带 2 轮重试；agent 调用时由 agent 自己重跑 |
+| `state captcha` | hCaptcha 图片题，脚本过不了。加 `-human_wait 120` 由用户点，或跳过 |
+| 偶发一两篇失败 | Cloudflare 抖动或超时。`-preset human` 自带 2 轮重试；agent 调用时由 agent 自己重跑 |
 | Elsevier 总是 `fetch_failed`，或手动点的下载没被认到 | 下载目录对不上。比对启动时打印的「浏览器下载目录」与 `edge://settings/downloads`，不一致就重跑一次 `start_edge.ps1` |
 | PDF 在内置阅读器里打开、拿不到文件 | 正常。**不要**改 `always_open_pdf_externally`，它是受保护偏好，会在启动时被还原；四级取件不依赖它 |
 | 下载到 Supplementary Materials | 候选过滤器应拦掉。新出版商的补充材料命名不同时，往 `publisher_pdf.SUPPLEMENT_PATTERN` 补 |
