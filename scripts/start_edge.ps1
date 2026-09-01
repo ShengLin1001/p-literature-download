@@ -60,7 +60,13 @@ if (-not $p.savefile) { $p | Add-Member savefile ([pscustomobject]@{}) -Force }
 $p.download | Add-Member prompt_for_download        $false        -Force
 $p.download | Add-Member default_directory          $DownloadDir  -Force
 $p.savefile | Add-Member default_directory          $DownloadDir  -Force
-$p | ConvertTo-Json -Depth 100 -Compress | Set-Content $prefsFile -Encoding utf8 -NoNewline
+# UTF-8 with NO byte-order mark. Set-Content -Encoding utf8 emits a BOM on
+# Windows PowerShell 5.1, and Chromium writes this file without one; a BOM
+# makes it a JSON parse error for anything that reads it back as plain utf-8.
+[System.IO.File]::WriteAllText(
+    $prefsFile,
+    ($p | ConvertTo-Json -Depth 100 -Compress),
+    (New-Object System.Text.UTF8Encoding $false))
 
 Write-Host "profile   : $ProfileDir"
 Write-Host "downloads : $DownloadDir"

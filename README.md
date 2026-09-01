@@ -171,15 +171,30 @@ journal-article（预印本、会议录）、被排除的文章类型（SnapShot
 
 ## 作为 skill 安装
 
-把整个仓库目录复制或软链到 agent 的 skill 根目录，重命名为 `p-literature-download`：
+仓库根目录就是 skill 根目录，所以最直接的装法是整个复制过去、命名成 `p-literature-download`：
 
 ```powershell
 Copy-Item -Recurse . "$env:USERPROFILE\.claude\skills\p-literature-download"
 ```
 
-Codex 用 `$env:CODEX_HOME\skills`。该 skill **只允许显式调用**
-（`$p-literature-download`），不会因为对话里出现 DOI 或"下载论文"就自动触发——
-它会开浏览器、发真实请求、动用机构会话，误触发的代价不该由用户承担。
+Codex 用 `$env:CODEX_HOME\skills`。
+
+> ⚠️ **不要用 `npx skills add ShengLin1001/download_pdf`。** 实测过：当仓库根目录本身
+> 就是 skill 时，那个 CLI 只会装走 `SKILL.md`，`scripts/` 一个文件都不带，装完是个空壳。
+> 它只对「skill 位于仓库子目录」的布局才拷贝完整目录。
+
+要在自己的配置仓库里长期维护并接收本仓库更新，用 **git subtree**（不是 submodule——
+submodule 存的是指针，别人克隆你的配置仓库会得到一个空目录）：
+
+```bash
+git subtree add  --prefix=<你的路径>/p-literature-download \
+    git@github.com:ShengLin1001/download_pdf.git main --squash
+git subtree pull --prefix=<你的路径>/p-literature-download \
+    git@github.com:ShengLin1001/download_pdf.git main --squash   # 之后拉更新
+```
+
+该 skill **只允许显式调用**（`$p-literature-download`），不会因为对话里出现 DOI 或
+"下载论文"就自动触发——它会开浏览器、发真实请求、动用机构会话，误触发的代价不该由用户承担。
 
 ## 安全与合规
 

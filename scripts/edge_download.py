@@ -361,8 +361,10 @@ def get_download_dir(profile_dir=PROFILE_DIR) -> Path:
     not been created yet.
     """
     try:
+        # utf-8-sig, not utf-8: a byte-order mark is a JSON parse error, and
+        # anything that writes this file from PowerShell can leave one behind.
         prefs = json.loads(
-            (Path(profile_dir) / "Default" / "Preferences").read_text(encoding="utf-8"))
+            (Path(profile_dir) / "Default" / "Preferences").read_text(encoding="utf-8-sig"))
         directory = (prefs.get("download") or {}).get("default_directory")
         if directory:
             return Path(directory)

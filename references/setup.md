@@ -66,13 +66,20 @@ Copy-Item -Recurse . "$env:USERPROFILE\.claude\skills\p-literature-download"
 
 Codex 用 `$env:CODEX_HOME\skills`。重启会话后确认能被发现。
 
-配置仓库里更推荐挂成 submodule，这样能收到上游更新：
+**不要用 `npx skills add ShengLin1001/download_pdf`**：仓库根目录本身是 skill 时，
+那个 CLI 只装 `SKILL.md`，`scripts/` 全丢，装完是空壳（实测确认）。
+
+要在配置仓库里长期维护并接收上游更新，用 **git subtree**：
 
 ```bash
-git submodule add git@github.com:ShengLin1001/download_pdf.git \
-    skills-using/root/p-literature-download
-git submodule update --remote skills-using/root/p-literature-download   # 之后拉更新
+git subtree add  --prefix=skills-using/root/p-literature-download \
+    git@github.com:ShengLin1001/download_pdf.git main --squash
+git subtree pull --prefix=skills-using/root/p-literature-download \
+    git@github.com:ShengLin1001/download_pdf.git main --squash   # 之后拉更新
 ```
+
+不要用 submodule：它存的是指针不是文件，`npx skills add` 克隆配置仓库时不带
+`--recurse-submodules`，拿到的是空目录。
 
 本 skill **只允许显式调用**（`$p-literature-download`）：它会开浏览器、发真实网络请求、
 动用机构会话，不该因为对话里出现 DOI 就自动触发。
