@@ -66,32 +66,63 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 
 DOI 文件每行一个 DOI，可在空白后附备注；空行和 `#` 开头的行忽略。
 
+**agent 跑批一律加 `--preset agent`**，它把该关的都关了：
+
+```bash
+python <skill目录>/scripts/edge_download.py <DOI列表> -o pdfs --preset agent
+```
+
 先用自带的开放获取样例确认环境正常（六篇、六家出版社，不需要机构订阅，应当 6/6）：
 
 ```bash
-python <skill目录>/scripts/edge_download.py <skill目录>/examples/dois-sample.txt -o pdfs \
-    --timeout 180 --skip-existing --report pdfs/report.json
+python <skill目录>/scripts/edge_download.py <skill目录>/examples/dois-sample.txt -o pdfs --preset agent
 ```
 
-再换成用户自己的 DOI 列表。
+### preset
+
+| | `--preset agent` | `--preset human` |
+|---|---|---|
+| `--retries` | **0** —— agent 看到失败自己重跑，脚本再轮询就是双重重试 | **2** —— 人跑没有外层循环，得自己兜 |
+| `--human-wait` | **0** —— agent 过不了图形验证码，弹窗口没意义 | **120** —— 人在旁边，能点 |
+| `--skip-existing` | 开 | 开 |
+| `--report` | 自动写到 `<输出目录>/report.json` | 同左 |
+| `--timeout` | 300 | 300 |
+
+显式写在命令行上的开关**永远压过 preset**，例如 `--preset human --retries 0`。
+
+### 全部开关
 
 | 开关 | 含义 |
 |---|---|
 | `-o/--output` | PDF 输出目录 |
+| `--preset` | `agent` / `human`，见上表 |
+| `--retries N` | 第一遍跑完后，把失败的再走 N 轮（默认 0）。轮次之间退避 45s |
 | `--timeout` | 每篇每阶段秒数上限（默认 300）。20 MB 以上的综述在 180s 下会失败 |
 | `--skip-existing` | 已有同名文件就跳过，用于补跑 |
 | `--report` | 每篇写一次 JSON，长跑过程中可随时查看 |
 | `--cdp` | CDP 端点（默认 `http://127.0.0.1:9333`） |
 | `--human-wait N` | **只**在遇到 hCaptcha / reCAPTCHA 图形验证时把标签页弹到前台等 N 秒。Cloudflare 一律由脚本自己拟人化点击通过，不打扰用户 |
+| `--profile-dir` | 从哪个 Edge profile 读下载目录（默认 `~/edge-automation`） |
+| `--download-dir` | 直接指定要监视的浏览器下载目录，覆盖上面读出来的值 |
 | `--selftest` | 只跑离线自检，不联网、不下载 |
+
+### 重试的口径
+
+只有 `failed` / `no_pdf_link` / `fetch_failed` / `error` 会重试。
+`unsupported`（不是 journal-article、期刊没缩写）和 `skipped`（已落盘）是确定性结论，
+重试只是再问 Crossref 一遍同样的问题，不会有不同答案。
+
+报告始终按输入顺序、每个 DOI 一条，重试**就地覆盖**而不是追加——否则同一个 DOI
+出现两条，下游所有计数都会串。重试过的条目带 `attempts` 字段，末尾也会汇总
+「几篇走了重试、其中几篇重试后成功」。
 
 脚本启动时先检查 Edge 是否可连；连不上直接报错退出，不会白跑整个列表。
 
 跑批时窗口会被最小化，且每个标签页都以后台方式创建，不会反复弹到桌面上挡住你手头的事。
 只有 `--human-wait` 遇到图形验证码时才会把窗口恢复出来让你操作。
 
-**失败重跑**：脚本本身只跑一遍，不做轮询。agent 使用时看到失败自己重跑一次即可
-（加 `--skip-existing`，成功的不会重下）；偶发失败多半是 Cloudflare 抖动或超时，重跑就好。
+**失败重跑**：`--preset agent` 下脚本只跑一遍。agent 看到失败自己重跑即可
+（`--skip-existing` 已经开着，成功的不会重下）；偶发失败多半是 Cloudflare 抖动或超时。
 
 ### 人工接管（常开，不需要任何开关）
 
@@ -108,6 +139,12 @@ resolve 循环每几秒重读一次所有标签页，所以：
 还有第三条：你点的按钮如果是**直接触发下载**（PDF 从不显示在标签页里），
 脚本每篇开始时给下载目录拍一张快照，之后每轮轮询比对，新出现的完整 PDF 同样算捕捉到。
 所以三种接管动作都认：手动开 PDF、手动过验证后交回脚本、手动点下载。
+
+监视的是哪个目录？**以 Edge profile 里写的为准，不是脚本里的常量。**
+`start_edge.ps1` 把下载目录写进 `<profile>/Default/Preferences`（默认
+`~/.pj/p-literature-download`），`edge_download.py` 启动时再从同一处读回来并打印出来。
+落地是 Edge 干的，所以只能问 Edge；脚本这边写死一个常量，别人一改 `-DownloadDir`
+就对不上，而对不上的表现是第 4 级取件和手动下载捕捉**静默失效**，看起来像出版商的问题。
 
 > ⚠️ **跑批期间不要在这个自动化 Edge 窗口里打开与本次任务无关的 PDF。**
 > 接管捕捉会扫描所有标签页，一篇处理途中出现的任何 PDF 都可能被当成该篇正文抓走，
@@ -187,7 +224,8 @@ python <skill目录>/scripts/verify_pdf.py <目录> --batch
 | PDF 在内置阅读器里打开、拿不到文件 | 正常，级别 1 和 3 不依赖下载。**不要**去改 `always_open_pdf_externally`，它是受保护偏好，改了会被启动时还原 |
 | 日志出现 `↩️ 偏离到 …，退回 DOI 重来` | 正常自愈。页面跑到了非本文页（APS 的 `/prb/accepted`、SSO wayfinder 等），脚本退回 DOI 重来，最多两次 |
 | 大文件（20 MB 以上）报 `fetch_failed` | 超时不够。`--timeout 240` 起步，RSC 综述这类要走第 3 级取件 |
-| 偶发一两篇失败，重跑就好 | Cloudflare 抖动或超时。带 `--skip-existing` 重跑同一份列表即可，脚本自己不做轮询 |
+| 偶发一两篇失败 | Cloudflare 抖动或超时。agent 直接重跑（`--preset agent` 已带 `--skip-existing`）；人跑用 `--preset human`，自带 2 轮重试 |
+| Elsevier 一直 `fetch_failed`，或手动点的下载没被认到 | 多半是下载目录对不上。看启动时打印的「浏览器下载目录」，跟 Edge 里 `edge://settings/downloads` 显示的是不是同一个；不是就重跑一次 `start_edge.ps1` |
 | 某出版商改版后取不到 | 先跑诊断：打开文章页看 `get_page_state` 和 `filter_pdf_candidates` 的输出，再决定是加 host 规则还是加取件级别 |
 
 ## 七、报告口径

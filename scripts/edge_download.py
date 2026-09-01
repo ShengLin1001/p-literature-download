@@ -46,8 +46,18 @@ The daily Edge's runtime-enabled port (edge://inspect) is not usable here: it
 serves no /json/* endpoints and stops accepting WebSocket handshakes after
 the first client disconnects.
 
+Two presets cover the callers. --preset agent turns in-script retries and the
+captcha prompt off, because an agent reruns the script itself on failure and
+cannot solve an image captcha either way; --preset human turns both on, because
+a person running this by hand has no outer loop. An explicit flag beats both.
+
+The folder watched for browser downloads is read from the Edge profile rather
+than assumed: Edge decides where a file lands, and watching the wrong folder
+makes tier 4 and the manual-download takeover fail without saying anything.
+
 Usage:
-    python edge_download.py dois.txt -o outdir [--report r.json] [--human-wait 90]
+    python edge_download.py dois.txt -o outdir --preset agent
+    python edge_download.py dois.txt -o outdir --preset human
     python edge_download.py --selftest
 """
 
@@ -334,18 +344,42 @@ def get_tab_by_token(context, token: str):
     return context.new_page()  # window pops up, but the run still works
 
 
-DOWNLOAD_DIR = Path.home() / "edge-automation" / "downloads"
+# Edge - not this script - decides where a download lands, so the folder below
+# is only a default: main() rebinds it from the profile Edge is actually using.
+# Watching the wrong folder makes tier 4 and the manual-download takeover fail
+# silently, which reads like a publisher problem rather than a wrong path.
+PROFILE_DIR = Path.home() / "edge-automation"
+DOWNLOAD_DIR = Path.home() / ".pj" / "p-literature-download"
 
 
-def snapshot_downloads(watch_dir: Path = DOWNLOAD_DIR) -> set:
+def get_download_dir(profile_dir=PROFILE_DIR) -> Path:
+    """Read the download folder out of the Edge profile that will serve us.
+
+    start_edge.ps1 writes it into the profile, so the profile is the source of
+    truth; a constant on this side goes stale the moment someone passes
+    -ProfileDir or -DownloadDir. Falls back to the default when the profile has
+    not been created yet.
+    """
+    try:
+        prefs = json.loads(
+            (Path(profile_dir) / "Default" / "Preferences").read_text(encoding="utf-8"))
+        directory = (prefs.get("download") or {}).get("default_directory")
+        if directory:
+            return Path(directory)
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return DOWNLOAD_DIR
+
+
+def snapshot_downloads(watch_dir: Path = None) -> set:
     """Names already in the browser's download folder."""
     try:
-        return {f.name for f in watch_dir.iterdir()}
+        return {f.name for f in (watch_dir or DOWNLOAD_DIR).iterdir()}
     except OSError:
         return set()
 
 
-def grab_downloaded_pdf(sbefore, watch_dir: Path = DOWNLOAD_DIR):
+def grab_downloaded_pdf(sbefore, watch_dir: Path = None):
     """Pick up a PDF that the user's own click told Edge to download.
 
     A publisher answering with Content-Disposition: attachment never shows the
@@ -357,6 +391,7 @@ def grab_downloaded_pdf(sbefore, watch_dir: Path = DOWNLOAD_DIR):
 
     Returns (pdf_bytes_or_None, source_label).
     """
+    watch_dir = watch_dir or DOWNLOAD_DIR
     try:
         lnew = [f for f in watch_dir.iterdir()
                 if f.name not in sbefore and f.is_file()
@@ -402,7 +437,7 @@ def check_pdf_identity(data: bytes, doi: str, title: str) -> str:
     return "正文里没找到本篇 DOI 或标题，可能抓错文章"
 
 
-def cdp_download(endpoint: str, urls, timeout: int, watch_dir: Path = DOWNLOAD_DIR):
+def cdp_download(endpoint: str, urls, timeout: int, watch_dir: Path = None):
     """Open each URL in a bare tab; return (pdf_bytes, url) for the first hit.
 
     Watches Edge's own download folder rather than redirecting it:
@@ -413,6 +448,7 @@ def cdp_download(endpoint: str, urls, timeout: int, watch_dir: Path = DOWNLOAD_D
     """
     if not urls:
         return None, ""
+    watch_dir = watch_dir or DOWNLOAD_DIR
     watch_dir.mkdir(parents=True, exist_ok=True)
     cdp = RawCdp(endpoint)
     try:
@@ -711,6 +747,114 @@ def download_one(endpoint, doi, out_dir, timeout, human_wait, name, title=""):
     return res
 
 
+# --- presets and the retry loop -----------------------------------------
+
+# Only these statuses are worth another attempt. "unsupported" and "skipped"
+# are settled facts (not a journal article, no journal abbreviation, already on
+# disk); retrying them just asks Crossref the same question again.
+SRETRIABLE = {"failed", "no_pdf_link", "fetch_failed", "error"}
+
+# Retrying a Cloudflare challenge straight away fails again, and a burst of
+# instant retries is itself part of what the wall scores.
+RETRY_BACKOFF = 45
+
+DEFAULTS = {"retries": 0, "human_wait": 0, "skip_existing": False, "timeout": 300}
+
+PRESETS = {
+    # An agent reruns the script itself when it sees a failure, so in-script
+    # retries would only multiply the wall clock and the publisher's load. It
+    # also cannot solve an image captcha, so surfacing the window is pointless.
+    "agent": {"retries": 0, "human_wait": 0, "skip_existing": True, "timeout": 300},
+    # A person running this by hand has no such outer loop, and can clear a
+    # captcha when one does show up.
+    "human": {"retries": 2, "human_wait": 120, "skip_existing": True, "timeout": 300},
+}
+
+
+def apply_preset(args):
+    """Fill in whatever the caller left unset: preset first, then bare defaults.
+
+    Every preset-controlled option parses with None as its default, so an
+    explicit flag is distinguishable from an unset one and always wins over the
+    preset. Returns the same namespace, mutated.
+    """
+    for key, value in {**DEFAULTS, **PRESETS.get(args.preset, {})}.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+    if args.preset and not args.report:
+        # A preset run is unattended by definition, so it gets the machine
+        # readable record without the caller having to remember the flag.
+        args.report = str(Path(args.output) / "report.json")
+    return args
+
+
+def write_report(path_report, ldoi, dresult):
+    """Rewrite the whole report, in input order, one entry per DOI.
+
+    Appending would put a retried DOI in the file twice, which silently breaks
+    every count downstream of it.
+    """
+    if not path_report:
+        return
+    Path(path_report).parent.mkdir(parents=True, exist_ok=True)
+    lordered = [dresult[doi] for doi in ldoi if doi in dresult]
+    Path(path_report).write_text(
+        json.dumps(lordered, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def download_doi(args, doi, out_dir, label):
+    """Name, skip or download one DOI. Returns a status dict."""
+    # Name before browsing: an unsupported record must be reported and skipped,
+    # not downloaded and then discarded.
+    name, reason, title = get_output_name(doi)
+    if reason:
+        print(f"\u23ed  {label} {doi}  ({reason})")
+        return {"doi": doi, "status": "unsupported", "file": None,
+                "state": "", "reason": reason}
+    dst = out_dir / name
+    if args.skip_existing and dst.exists():
+        print(f"\u23ed  {label} {doi}  -> {name} (exists)")
+        return {"doi": doi, "status": "skipped", "file": str(dst),
+                "state": "", "reason": "already downloaded"}
+    print(f"\u25b6\ufe0f  {label} {doi}  -> {name}")
+    try:
+        res = download_one(args.cdp, doi, out_dir, args.timeout,
+                           args.human_wait, name, title)
+    except Exception as exc:
+        res = {"doi": doi, "status": "error", "file": None,
+               "state": "", "reason": str(exc)[:200]}
+    print(f"   {res['status']}: {res['reason']}")
+    if res.get("warning"):
+        print(f"   \u26a0\ufe0f  {res['warning']}")
+    return res
+
+
+def download_batch(args, ldoi, out_dir):
+    """Run the list, then re-run only what failed. Results in input order.
+
+    Off by default (--retries 0): under an agent the outer loop already is the
+    retry, and doubling it wastes time and publisher goodwill. A person running
+    this by hand has no outer loop, which is what --preset human turns it on
+    for.
+    """
+    dresult = {}
+    for attempt in range(args.retries + 1):
+        lpending = [doi for doi in ldoi
+                    if dresult.get(doi, {}).get("status", "failed") in SRETRIABLE]
+        if not lpending:
+            break
+        if attempt:
+            print(f"\n\U0001f501 \u7b2c {attempt + 1} \u8f6e\uff0c\u91cd\u8bd5 "
+                  f"{len(lpending)} \u7bc7\uff08\u5148\u9000\u907f {RETRY_BACKOFF}s\uff09")
+            time.sleep(RETRY_BACKOFF)
+        for i, doi in enumerate(lpending, 1):
+            res = download_doi(args, doi, out_dir, f"[{i}/{len(lpending)}]")
+            res["attempts"] = attempt + 1
+            dresult[doi] = res
+            write_report(args.report, ldoi, dresult)
+    return [dresult[doi] for doi in ldoi]
+
+
 def selftest():
     """Offline check of the orchestration and the two vendored modules."""
     # page-state classification
@@ -749,7 +893,34 @@ def selftest():
 
     # orchestration
     assert cdp_download("http://127.0.0.1:1", [], 1) == (None, "")
-    assert DOWNLOAD_DIR.name == "downloads"
+    assert DOWNLOAD_DIR == Path.home() / ".pj" / "p-literature-download"
+    assert get_download_dir(Path("no/such/profile")) == DOWNLOAD_DIR
+
+    # presets: an explicit flag always beats the preset
+    def ns(**kw):
+        base = dict(preset=None, output=".", report="", retries=None,
+                    human_wait=None, skip_existing=None, timeout=None)
+        return argparse.Namespace(**{**base, **kw})
+
+    args = apply_preset(ns(preset="human"))
+    assert (args.retries, args.human_wait, args.skip_existing) == (2, 120, True)
+    assert args.report.endswith("report.json")
+    args = apply_preset(ns(preset="agent"))
+    assert (args.retries, args.human_wait, args.skip_existing) == (0, 0, True)
+    args = apply_preset(ns(preset="human", retries=0, report="r.json"))
+    assert args.retries == 0 and args.report == "r.json"
+    args = apply_preset(ns())
+    assert (args.retries, args.timeout, args.report) == (0, 300, "")
+
+    # a settled verdict must never be retried
+    assert not SRETRIABLE & {"unsupported", "skipped", "downloaded"}
+
+    # the report keeps input order and one entry per DOI, however often retried
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        path_report = Path(tmp) / "r.json"
+        write_report(path_report, ["a", "b"], {"b": {"doi": "b"}, "a": {"doi": "a"}})
+        assert [r["doi"] for r in json.loads(path_report.read_text())] == ["a", "b"]
     print("✅ selftest ok")
 
 
@@ -757,69 +928,70 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("dois", nargs="?", help="DOI list file")
     ap.add_argument("-o", "--output", default=".")
-    ap.add_argument("--timeout", type=int, default=300,
-                    help="seconds per stage per DOI; a 20MB+ review needs well over 180")
-    ap.add_argument("--human-wait", type=int, default=0,
+    ap.add_argument("--preset", choices=sorted(PRESETS),
+                    help="agent: no in-script retry, no captcha prompt, because "
+                         "the agent reruns on failure. human: 2 retries, 120s "
+                         "captcha wait. An explicit flag overrides the preset.")
+    ap.add_argument("--timeout", type=int, default=None,
+                    help="seconds per stage per DOI (default 300); a 20MB+ review "
+                         "needs well over 180")
+    ap.add_argument("--retries", type=int, default=None,
+                    help="extra passes over the DOIs that failed (default 0)")
+    ap.add_argument("--human-wait", type=int, default=None,
                     help="extra seconds granted after surfacing the tab on a captcha")
     ap.add_argument("--cdp", default="http://127.0.0.1:9333",
                     help="CDP endpoint of the automation Edge")
-    ap.add_argument("--skip-existing", action="store_true")
+    ap.add_argument("--profile-dir", default=str(PROFILE_DIR),
+                    help="Edge profile to read the download folder from")
+    ap.add_argument("--download-dir", default="",
+                    help="override the folder watched for browser downloads")
+    ap.add_argument("--skip-existing", action="store_true", default=None)
     ap.add_argument("--report", default="")
     ap.add_argument("--selftest", action="store_true")
-    args = ap.parse_args()
+    args = apply_preset(ap.parse_args())
     if args.selftest:
         return selftest()
 
-    dois = parse_dois(Path(args.dois))
+    ldoi = parse_dois(Path(args.dois))
     out_dir = Path(args.output).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     check_endpoint(args.cdp)
+
+    # Edge decides where downloads land, so take the folder from its own
+    # profile rather than assuming. Bound once here, before any worker reads it.
+    global DOWNLOAD_DIR
+    DOWNLOAD_DIR = (Path(args.download_dir) if args.download_dir
+                    else get_download_dir(args.profile_dir))
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
     # Get the window out of the way once; background tabs keep it there.
     set_window_state(args.cdp, "minimized")
-    print(f"📡 {args.cdp}  ·  {len(dois)} DOIs  ->  {out_dir}")
+    print(f"\U0001f4e1 {args.cdp}  \u00b7  {len(ldoi)} DOIs  ->  {out_dir}")
+    print(f"\U0001f4e5 \u6d4f\u89c8\u5668\u4e0b\u8f7d\u76ee\u5f55\uff1a{DOWNLOAD_DIR}")
+    if args.preset:
+        print(f"\u2699\ufe0f  preset {args.preset}\uff1aretries={args.retries} "
+              f"human-wait={args.human_wait} timeout={args.timeout}")
 
-    results = []
-    for i, doi in enumerate(dois, 1):
-        # Name before browsing: an unsupported record must be reported and
-        # skipped, not downloaded and then discarded.
-        name, reason, title = get_output_name(doi)
-        if reason:
-            print(f"⏭  [{i}/{len(dois)}] {doi}  ({reason})")
-            results.append({"doi": doi, "status": "unsupported", "file": None,
-                            "state": "", "reason": reason})
-            continue
-        dst = out_dir / name
-        if args.skip_existing and dst.exists():
-            print(f"⏭  [{i}/{len(dois)}] {doi}  -> {name} (exists)")
-            results.append({"doi": doi, "status": "skipped", "file": str(dst),
-                            "state": "", "reason": "already downloaded"})
-            continue
-        print(f"▶️  [{i}/{len(dois)}] {doi}  -> {name}")
-        try:
-            r = download_one(args.cdp, doi, out_dir, args.timeout,
-                             args.human_wait, name, title)
-        except Exception as exc:
-            r = {"doi": doi, "status": "error", "file": None,
-                 "state": "", "reason": str(exc)[:200]}
-        results.append(r)
-        print(f"   {r['status']}: {r['reason']}")
-        if r.get("warning"):
-            print(f"   ⚠️  {r['warning']}")
-        if args.report:                     # rewrite after each DOI, so a long
-            Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.report).write_text(   # run stays inspectable while it runs
-                json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    results = download_batch(args, ldoi, out_dir)
+    write_report(args.report, ldoi, {r["doi"]: r for r in results})
 
     ok = sum(1 for r in results if r["status"] in ("downloaded", "skipped"))
-    print(f"\n📊 {ok}/{len(results)}")
+    print(f"\n\U0001f4ca {ok}/{len(results)}")
+    lretried = [r for r in results if r.get("attempts", 1) > 1]
+    if lretried:
+        nfixed = sum(1 for r in lretried if r["status"] == "downloaded")
+        print(f"\U0001f501 {len(lretried)} \u7bc7\u8d70\u4e86\u91cd\u8bd5\uff0c"
+              f"\u5176\u4e2d {nfixed} \u7bc7\u91cd\u8bd5\u540e\u6210\u529f")
     # Advisory only - these files were kept. Collecting them here matters,
     # because a single line per DOI is lost in a long run.
     lwarn = [r for r in results if r.get("warning")]
     if lwarn:
-        print(f"\n⚠️  {len(lwarn)} 篇内容核对未通过（文件已保留，请自行确认）：")
+        print(f"\n\u26a0\ufe0f  {len(lwarn)} \u7bc7\u5185\u5bb9\u6838\u5bf9\u672a"
+              "\u901a\u8fc7\uff08\u6587\u4ef6\u5df2\u4fdd\u7559\uff0c\u8bf7\u81ea"
+              "\u884c\u786e\u8ba4\uff09\uff1a")
         for r in lwarn:
             fname = Path(r["file"]).name if r["file"] else ""
-            print(f"   {r['doi']}  {fname}  —— {r['warning']}")
+            print(f"   {r['doi']}  {fname}  \u2014\u2014 {r['warning']}")
     raise SystemExit(0 if ok == len(results) else 1)
 
 

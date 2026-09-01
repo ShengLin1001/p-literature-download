@@ -26,8 +26,20 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 ```
 
 用独立 profile `%USERPROFILE%\edge-automation` 启动，带 `--remote-debugging-port=9333`
-和 `--no-proxy-server`。换端口用 `-Port`，换 profile 用 `-ProfileDir`，
-需要先过 WebVPN 就用 `-LoginUrl "https://webvpn.your-university.edu/"`（默认 `about:blank`）。
+和 `--no-proxy-server`。
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `-Port` | `9333` | CDP 调试端口 |
+| `-ProfileDir` | `%USERPROFILE%\edge-automation` | 独立 profile，登录态存这儿 |
+| `-DownloadDir` | `%USERPROFILE%\.pj\p-literature-download` | Edge 的下载目录，写进 profile 的 Preferences |
+| `-LoginUrl` | `about:blank` | 要先过 WebVPN 就填 `https://webvpn.your-university.edu/` |
+
+脚本会把 `-DownloadDir` 写进 `<profile>\Default\Preferences`，**profile 是全新的也会创建**——
+这一步跳过的话 Edge 会下到你真实的「下载」文件夹，而 `edge_download.py` 不看那里，
+表现是 Elsevier 取不到、手动点的下载也认不到，且没有任何报错。
+`edge_download.py` 启动时从同一个 Preferences 读回目录并打印，两边永远一致，
+不需要在 Python 那边再写一遍。
 
 不要用日常 Edge 通过 `edge://inspect` 临时开的调试端口：它的 `/json/*` 全部 404，
 且第一个客户端断开后就不再完成 WebSocket 握手。
@@ -78,10 +90,12 @@ python <skill目录>\scripts\verify_pdf.py --selftest
 六家出版社，不需要机构订阅，装好之后应当 **6/6**：
 
 ```powershell
-python <skill目录>\scripts\edge_download.py <skill目录>\examples\dois-sample.txt -o .\pdfs `
-    --timeout 180 --skip-existing --report .\pdfs\report.json
+python <skill目录>\scripts\edge_download.py <skill目录>\examples\dois-sample.txt -o .\pdfs --preset human
 python <skill目录>\scripts\verify_pdf.py .\pdfs --batch
 ```
+
+`--preset human` = 失败重试 2 轮 + 验证码弹窗口等 120s + 跳过已有 + 自动写报告。
+被 agent 调用时改用 `--preset agent`：不重试（agent 自己会重跑）、不弹验证码窗口。
 
 拿不满 6/6 说明是环境问题（Edge 没起来、走了系统代理、依赖没装），不是权限问题。
 
@@ -101,7 +115,8 @@ DOI 文件格式：每行一个 DOI，可在空白后附备注；空行和 `#` �
 | 挑战永远停在 `Request Verification: In Progress` | 走了系统代理。Cloudflare 判的是出口 IP，`start_edge.ps1` 已带 `--no-proxy-server` |
 | 全部 `no_pdf_link (state paywall)` | 机构会话过期，去自动化 Edge 里重新登录一次 |
 | `state captcha` | hCaptcha 图片题，脚本过不了。加 `--human-wait 120` 由用户点，或跳过 |
-| 偶发一两篇失败 | Cloudflare 抖动或超时。脚本不做轮询，带 `--skip-existing` 重跑同一份列表即可 |
+| 偶发一两篇失败 | Cloudflare 抖动或超时。`--preset human` 自带 2 轮重试；agent 调用时由 agent 自己重跑 |
+| Elsevier 总是 `fetch_failed`，或手动点的下载没被认到 | 下载目录对不上。比对启动时打印的「浏览器下载目录」与 `edge://settings/downloads`，不一致就重跑一次 `start_edge.ps1` |
 | PDF 在内置阅读器里打开、拿不到文件 | 正常。**不要**改 `always_open_pdf_externally`，它是受保护偏好，会在启动时被还原；四级取件不依赖它 |
 | 下载到 Supplementary Materials | 候选过滤器应拦掉。新出版商的补充材料命名不同时，往 `publisher_pdf.SUPPLEMENT_PATTERN` 补 |
 | 下到了参考文献里别人的 PDF | 同上，检查 `filter_pdf_candidates`；候选必须含本文 DOI 后缀或页面 URL 里的 PII，都不匹配才回退到同域 |

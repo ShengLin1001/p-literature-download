@@ -10,9 +10,13 @@
 param(
     [int]$Port = 9333,
     [string]$ProfileDir = "$env:USERPROFILE\edge-automation",
+    # Where Edge drops files it downloads. edge_download.py reads this back out
+    # of the profile, so changing it here is enough - do not also hard-code it
+    # on the Python side.
+    [string]$DownloadDir = "$env:USERPROFILE\.pj\p-literature-download",
     # Landing page of your own institution's WebVPN / SSO. Only a convenience:
-    # log in here once and the cookie stays in this profile. Pass "about:blank"
-    # if your institution needs no VPN.
+    # log in here once and the cookie stays in this profile. Leave at the
+    # default if your institution needs no VPN.
     [string]$LoginUrl = "about:blank"
 )
 
@@ -26,9 +30,10 @@ if (-not $edge) {
     Write-Error "找不到 msedge.exe，请确认已安装 Microsoft Edge。"
     exit 1
 }
-$downloads = Join-Path $ProfileDir "downloads"
+
 $prefsFile = Join-Path $ProfileDir "Default\Preferences"
-New-Item -ItemType Directory -Force -Path $downloads | Out-Null
+New-Item -ItemType Directory -Force -Path $DownloadDir | Out-Null
+New-Item -ItemType Directory -Force -Path (Split-Path $prefsFile) | Out-Null
 
 # The download directory must be written while Edge is stopped, immediately
 # before launching, or a shutdown flush reverts it. always_open_pdf_externally
@@ -40,15 +45,26 @@ while (Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
     Start-Sleep -Milliseconds 500
 }
 
-if (Test-Path $prefsFile) {
-    $p = Get-Content $prefsFile -Raw | ConvertFrom-Json
-    if (-not $p.download) { $p | Add-Member download ([pscustomobject]@{}) -Force }
-    if (-not $p.savefile) { $p | Add-Member savefile ([pscustomobject]@{}) -Force }
-    $p.download | Add-Member prompt_for_download        $false      -Force
-    $p.download | Add-Member default_directory          $downloads  -Force
-    $p.savefile | Add-Member default_directory          $downloads  -Force
-    $p | ConvertTo-Json -Depth 100 -Compress | Set-Content $prefsFile -Encoding utf8 -NoNewline
+# A brand-new profile has no Preferences file yet, so this has to seed one
+# rather than skip. Skipping is what silently leaves downloads going to the
+# user's real Downloads folder, where edge_download.py never looks - the
+# Elsevier tier and the manual-download takeover then fail for no visible
+# reason. Edge fills in every other preference on first launch.
+$p = if (Test-Path $prefsFile) {
+    Get-Content $prefsFile -Raw | ConvertFrom-Json
+} else {
+    [pscustomobject]@{}
 }
+if (-not $p.download) { $p | Add-Member download ([pscustomobject]@{}) -Force }
+if (-not $p.savefile) { $p | Add-Member savefile ([pscustomobject]@{}) -Force }
+$p.download | Add-Member prompt_for_download        $false        -Force
+$p.download | Add-Member default_directory          $DownloadDir  -Force
+$p.savefile | Add-Member default_directory          $DownloadDir  -Force
+$p | ConvertTo-Json -Depth 100 -Compress | Set-Content $prefsFile -Encoding utf8 -NoNewline
+
+Write-Host "profile   : $ProfileDir"
+Write-Host "downloads : $DownloadDir"
+Write-Host "CDP       : http://127.0.0.1:$Port"
 
 & $edge --remote-debugging-port=$Port --user-data-dir=$ProfileDir --no-proxy-server `
     --no-first-run --no-default-browser-check $LoginUrl

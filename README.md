@@ -66,8 +66,7 @@ python scripts/verify_pdf.py --selftest
 依赖没装），不是权限问题。
 
 ```bash
-python scripts/edge_download.py examples/dois-sample.txt -o pdfs \
-    --timeout 180 --skip-existing --report pdfs/report.json
+python scripts/edge_download.py examples/dois-sample.txt -o pdfs --preset human
 python scripts/verify_pdf.py pdfs --batch
 ```
 
@@ -80,20 +79,56 @@ python scripts/verify_pdf.py pdfs --batch
 10.1103/PhysRevB.88.064104
 ```
 
-## 常用开关
+## 两个 preset
+
+绝大多数情况下你只需要记住这两个之一：
+
+```bash
+python scripts/edge_download.py dois.txt -o pdfs --preset human   # 人自己跑
+python scripts/edge_download.py dois.txt -o pdfs --preset agent   # 被 agent 调用
+```
+
+| | `--preset human` | `--preset agent` |
+|---|---|---|
+| 失败重试 | **2 轮**（轮次间退避 45s） | **0 轮** |
+| 验证码 | 弹窗口等你 120s | 不弹 |
+| 跳过已有 / 写报告 | 都开 | 都开 |
+
+区别的根子在**谁来兜失败**：agent 看到失败会自己重跑脚本，那本身就是重试，
+脚本再轮询一遍就是双重重试，白白多花时间、多敲出版商的门；而且 agent 也解不了
+图形验证码，把窗口弹出来没有意义。人自己跑没有这个外层循环，所以两件事都得自己来。
+
+显式写在命令行上的开关**永远压过 preset**，比如 `--preset human --retries 0`。
+
+## 全部开关
 
 | 开关 | 含义 |
 |---|---|
 | `-o/--output` | PDF 输出目录 |
+| `--preset` | `human` / `agent`，见上 |
+| `--retries N` | 第一遍跑完后，把失败的再走 N 轮（默认 0） |
 | `--timeout` | 每篇每阶段秒数上限（默认 300）。20 MB 以上的综述在 180s 下会失败 |
 | `--skip-existing` | 已有同名文件就跳过，补跑时用 |
 | `--report` | 每篇写一次 JSON，长跑过程中随时可查 |
 | `--cdp` | CDP 端点，默认 `http://127.0.0.1:9333` |
 | `--human-wait N` | 只在遇到 hCaptcha 图形验证时把标签页弹到前台等 N 秒 |
+| `--profile-dir` | 从哪个 Edge profile 读下载目录，默认 `~/edge-automation` |
+| `--download-dir` | 直接指定要监视的浏览器下载目录 |
 | `--selftest` | 只跑离线自检 |
 
-脚本只跑一遍，不做轮询。偶发失败（Cloudflare 抖动、超时）带 `--skip-existing`
-重跑同一份列表即可，成功的不会重下。
+只有 `failed` / `no_pdf_link` / `fetch_failed` / `error` 会被重试。
+`unsupported`（不是期刊论文、期刊没缩写）和 `skipped`（已经下过）是确定性结论，
+重试不会得到不同答案。报告始终每个 DOI 一条、按输入顺序，重试是就地覆盖不是追加。
+
+## 浏览器下载目录
+
+绝大多数出版商的 PDF 是脚本在页面里直接 `fetch()` 回来的，不落浏览器的下载目录。
+但有两条路径依赖它：Elsevier 走的第 4 级取件，以及你手动点「下载」按钮时的接管捕捉。
+
+**落地是 Edge 决定的，所以以 Edge profile 里写的为准。** `start_edge.ps1` 把目录写进
+`<profile>/Default/Preferences`（默认 `~/.pj/p-literature-download`，用 `-DownloadDir` 改），
+`edge_download.py` 启动时从同一处读回来并打印。两边对不上的表现是上面那两条路径
+**静默失效**，看起来像出版商的问题——所以启动时那行「浏览器下载目录」值得扫一眼。
 
 ## 人工接管
 
