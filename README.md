@@ -2,18 +2,23 @@
 
 按 DOI 列表，从**出版商官网**批量下载学术文献正文 PDF。
 
-流程是：DOI → doi.org → 出版商官网 → 过 Cloudflare 与机构登录 → 取回正文 PDF →
-按 `年份-期刊缩写-标题.pdf` 统一命名 → 验收。驱动的是一个你自己登录过一次的
-专用 Microsoft Edge，脚本全程不接触任何密码或 Cookie。
+流程是：DOI → 出版商官网直连 → 失败时经 ZJU WebVPN 兜底 → 取回正文 PDF →
+按 `年份-期刊缩写-标题-DOI后缀.pdf` 统一命名 → 验收。驱动专用 Microsoft Edge；Cookie
+只保留在 profile，WebVPN 会话失效时才读取该 profile 内由 Windows DPAPI 加密的凭据。
 
 本仓库同时是一个 agent skill（Claude Code / Codex 等），仓库根目录就是 skill 根目录。
 也可以完全不用 agent，直接当命令行工具跑。
 
+这个 skill 已经并入配置仓库 `codex-config`，在那边以 git submodule 的形式挂在
+`skills-using/root/p-literature-download`。**改动仍然提交到本仓库**，下游用
+`git submodule update --remote` 拉取。
+
 ## 不做什么
 
 只从出版商官网取正文。**不用** Elsevier API、Unpaywall、OpenAlex、CORE、DOAJ、
-Sci-Hub、LibGen，也不用预印本或仓储版本替代正式期刊版本。
-补充材料、SnapShot、采访稿都不算下载成功。
+Sci-Hub、LibGen，也不用预印本或仓储版本替代正式期刊版本（但 DOI 本身就指向
+arXiv 时照常下载）。补充材料、SnapShot、采访稿都不算下载成功。
+期刊**不设白名单**，缩写表外的刊照常下载。
 
 ## 快速开始
 
@@ -43,17 +48,13 @@ powershell -NoProfile -File scripts\start_edge.ps1
 └── download/    # 浏览器下载落地处
 ```
 
-在弹出的窗口里手动登录一次你学校的统一身份认证 / WebVPN / CARSI，cookie 就留在这个
-profile 里，之后每次跑脚本自动复用。
+启动脚本会复用已有的 ZJU WebVPN 首页；没有时只补开一个。平时登录态由该 profile
+里的 cookie 复用。会话失效且需要兜底时，脚本才读取该 profile 下由 Windows DPAPI 加密的凭据并自动登录。
+首次启动会弹系统凭据窗口；换账号或密码时运行 `start_edge.ps1 -initialize_credentials`。
+账号和密码都不写源码、命令行、日志或报告，也只有创建凭据的 Windows 用户能解密。
 
-`--no-proxy-server` 不是可选项：走系统代理时 Cloudflare 按出口 IP 判定，
-出版商挑战会永久卡在 "Request Verification: In Progress"。
-
-需要先过 WebVPN 的话，直接把登录页当参数传进去，省得自己敲网址：
-
-```powershell
-powershell -NoProfile -File scripts\start_edge.ps1 -login_url "https://webvpn.your-university.edu/"
-```
+`--no-proxy-server` 不是可选项：直连主路径走系统代理时，Cloudflare 会按出口 IP 判定，
+出版商挑战可能永久卡在 "Request Verification: In Progress"。
 
 换个位置放这些状态就传 `-data_dir`，`edge_download.py` 那边是同名的开关，两边只有这一个旋钮。
 
@@ -126,13 +127,19 @@ python scripts/edge_download.py dois.txt -output pdfs -preset agent   # 被 agen
 | `-selftest` | 只跑离线自检 |
 
 只有 `failed` / `no_pdf_link` / `fetch_failed` / `error` 会被重试。
-`unsupported`（不是期刊论文、期刊没缩写）和 `skipped`（已经下过）是确定性结论，
-重试不会得到不同答案。报告始终每个 DOI 一条、按输入顺序，重试是就地覆盖不是追加。
+`unsupported`（补充材料、SnapShot、元数据缺字段）和 `skipped`（已经下过）是确定性结论，
+重试不会得到不同答案。`captcha` 同样不重试——图形验证要人过（`-human_wait 120` 或手动接管），
+脚本重跑只会把 bot 评分越喂越高。报告始终每个 DOI 一条、按输入顺序，重试是就地覆盖不是追加。
 
 ## 浏览器下载目录
 
+每篇先走当前直连四级策略；只有整篇最终未取到 PDF，才从 ZJU WebVPN 首页搜索框
+重新进入官方文章页面。这样 AIP、PNAS 可借 WebVPN 取得机构权限，同时 APS、Cell 等与
+WebVPN 不兼容的站点仍保留原本可用的直连路径。报告的 `access_via` 会写 `direct` 或
+`webvpn.zju.edu.cn`。
+
 绝大多数出版商的 PDF 是脚本在页面里直接 `fetch()` 回来的，不落浏览器的下载目录。
-但有两条路径依赖它：Elsevier 走的第 4 级取件，以及你手动点「下载」按钮时的接管捕捉。
+但 Elsevier 第 4 级取件、WebVPN 的 attachment 下载和人工接管会使用该目录。
 
 **落地是 Edge 决定的，所以以 Edge profile 里写的为准。** `start_edge.ps1` 把目录写进
 `<data-dir>/profile/Default/Preferences`（默认 `~/.pj/p-literature-download/download`），
@@ -143,19 +150,21 @@ python scripts/edge_download.py dois.txt -output pdfs -preset agent   # 被 agen
 
 随时可以把 Edge 窗口拉出来自己操作，脚本不会把它压回去，也不会阻塞等你。
 它每几秒重读一次所有标签页，所以三种接管动作都认：手动过验证码、手动打开 PDF、
-手动点下载按钮。
-
-⚠️ 跑批期间别在这个自动化 Edge 里打开与本次任务无关的 PDF——接管捕捉会扫所有标签页，
-可能把它当成当前这篇抓走，结果是文件名对、内容错。临时看文献用你的日常 Edge。
+手动点下载按钮。标签页或下载目录中的接管 PDF 必须从前 3 页匹配当前 DOI 或标题才会接收；
+不匹配时忽略且不删除源文件，避免把上一篇或无关 PDF 改名成当前文献。普通出版社候选链接
+仍只在不匹配时警告，以免误杀未印 DOI 或 OCR 较差的老文献。
 
 ## 命名与验收
 
-输出文件名是 `年份-期刊缩写-标题前十个有效字符.pdf`，例如
-`2013-NATURE-Nanometre-s.pdf`。缩写表在 `scripts/literature_download.py` 的
-`JOURNAL_ABBREVIATIONS`，新期刊往里加一条即可。
+输出文件名是 `年份-期刊缩写-标题前十个有效字符-DOI后缀.pdf`，例如
+`2025-JACS-Machine-Lea-jacs.4c17739.pdf`。DOI 后缀保证一个 DOI 恒对应一个文件名，
+标题前缀撞了也不会互相顶掉，`-skip_existing` 只看路径。缩写按 `JOURNAL_ABBREVIATIONS` → 本地缓存 → NLM Catalog（按 ISSN 在线查 ISO 4 缩写）→
+Crossref 的 `short-container-title` → 期刊全名 → 出版商名的顺序取，表外的刊自动得到缩写，
+不会被拒。首次得到的缩写写入 `<data_dir>/journal_abbreviations.json` 并永久复用，保证文件名稳定。
+想给某本刊钉死一个叫法，就往 `JOURNAL_ABBREVIATIONS` 加一条。
 
-脚本**在开浏览器之前**就查 Crossref 定名，定不了名的直接报告并跳过：不是
-journal-article（预印本、会议录）、被排除的文章类型（SnapShot）、期刊不在缩写表。
+脚本**在开浏览器之前**就查元数据定名（Crossref，查不到再走 doi.org 内容协商），
+定不了名的才报告并跳过：元数据查不到、补充材料、SnapShot、缺年份或标题。
 
 一个 DOI 记为 pass，当且仅当：本轮真实落盘 + `%PDF-` 头 / `%%EOF` 尾 / 页数 > 0 +
 提取文本里的 DOI 或标题与 Crossref 匹配 + 首页不是补充材料。
@@ -207,7 +216,7 @@ git subtree pull --prefix=<你的路径>/p-literature-download \
 
 ## 安全与合规
 
-- 脚本不读取、不复制、不转发任何密码或 Cookie，登录态只存在于你自己的 Edge profile。
+- Cookie 与 DPAPI 加密的 WebVPN 凭据只存在于各自 Edge profile；账号和密码不写源码、命令行、日志或报告。
 - **不要**把 `~/.pj/p-literature-download/profile` 复制给别人，它含你的机构会话。
   每位使用者建立自己的 profile。
 - 不要提交 PDF、profile、Cookie、密钥或运行日志（`.gitignore` 已覆盖）。

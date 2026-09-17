@@ -32,7 +32,7 @@
 - 测试输入放 `tests/fixtures/`，对外试跑样例放 `examples/`，生成产物放 `tests/artifacts/`（已 gitignore）。
 - 不提交 PDF、浏览器 profile、cookie、密钥、登录信息、截图、缓存或运行日志。
 - 本机状态一律收在一个 data dir 下（默认 `~/.pj/p-literature-download`）：`profile/` 放
-  登录态，`download/` 放下载。Python 侧和 PowerShell 侧都叫 `-data_dir`，
+  登录态，`download/` 放下载，`journal_abbreviations.json` 缓存期刊缩写（文件名稳定性靠它，别删）。Python 侧和 PowerShell 侧都叫 `-data_dir`，
   只此一个旋钮；不要再加第二个路径参数，也不要往用户家目录里散落其他目录。
 - 默认 UTF-8；优先复用现有脚本和函数，保持改动最小。
 - 本 skill 只允许显式调用。改 `SKILL.md` 的 frontmatter `description` 或

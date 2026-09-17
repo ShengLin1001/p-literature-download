@@ -14,3 +14,5 @@ tmp/
 browser-get-report.json
 report.json
 *.log
+webvpn-credential.clixml
+*.clixml

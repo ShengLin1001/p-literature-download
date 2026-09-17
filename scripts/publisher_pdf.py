@@ -8,10 +8,12 @@ knowledge can back any driver. Stdlib only; covered by
 
 Functions:
     get_page_state: Classify a publisher page from its HTML and final URL.
+    get_article_entry_url: Rewrite a stalling landing host to the article host.
     get_publisher_pdf_url: Derive a PDF URL from an article URL by host rule.
     check_supplement_url: Detect supplementary-material links.
     check_article_url: Detect links belonging to the requested article.
     filter_pdf_candidates: Drop supplements, cited papers, and foreign hosts.
+    get_url_origin: Compare direct and WebVPN-rewritten upstream origins safely.
 
 Constants:
     JS_IS_PDF_DOCUMENT: Detect a tab currently displaying a PDF.
@@ -34,9 +36,14 @@ def get_page_state(html: str, url: str) -> str:
 
     Returns:
         One of ``pdf_ready``, ``cloudflare``, ``captcha``, ``article``,
-        ``paywall``, ``institution_login``, or ``unknown``.
+        ``paywall``, ``institution_login``, ``webvpn_login``, or ``unknown``.
     """
     low = (html or "")[:200000].lower()
+    # An expired WebVPN session can retain a PDF-looking proxy URL while serving
+    # the login form. Classify the content before trusting the suffix.
+    if ("webvpn.zju.edu.cn/login" in (url or "").lower()
+            or ('id="user_name"' in low and 'name="password"' in low)):
+        return "webvpn_login"
     if re.search(r"\.pdf(\?|#|$)", url or "", re.I):
         return "pdf_ready"
     # Cloudflare ships several interstitial wordings; match the markup too, so
@@ -65,9 +72,11 @@ def get_page_state(html: str, url: str) -> str:
 # need a hint: they either omit the tag, or advertise a URL that does not
 # actually serve the file.
 LHOST_PDF_RULES = (
-    # ScienceDirect hides the PDF behind a viewer page; the asset is pii + /pdfft.
-    (r"^(https://[^/]*sciencedirect\.com/science/article/pii/[A-Z0-9]+).*",
-     r"\1/pdfft?isDTMRedir=true&download=true"),
+    # No ScienceDirect rule on purpose: its own citation_pdf_url is a *signed*
+    # /pdfft (md5 + pid). The bare pii + /pdfft?isDTMRedir=true a rule can
+    # build is unsigned, and ScienceDirect answers that with the Cloudflare
+    # crasolve page (200 text/html) instead of the file - which also poisoned
+    # tier 4, because the same URL is what the detached tab navigated to.
     # APS advertises link.aps.org/pdf/..., which only bounces back to the
     # abstract. The journal host serves the real file.
     (r"^(https://journals\.aps\.org/[^/]+)/abstract/(10\..+)$", r"\1/pdf/\2"),
@@ -81,6 +90,24 @@ LHOST_PDF_RULES = (
     (r"^(https://[^/]*annualreviews\.org/content/journals/10\.[^?]+?)(?:\?.*)?$",
      r"\1?crawler=true&mimetype=application/pdf"),
 )
+
+
+# doi.org routes every Elsevier DOI through linkinghub, and it is that host's
+# own redirect to ScienceDirect that Cloudflare stalls - the article never
+# opens. Jumping straight to the article host skips the hop.
+LHOST_ENTRY_RULES = (
+    (r"^https://linkinghub\.elsevier\.com/retrieve/pii/([A-Z0-9]+).*",
+     r"https://www.sciencedirect.com/science/article/pii/\1"),
+)
+
+
+def get_article_entry_url(url: str) -> str:
+    """Return the article URL to open, rewriting stalling landing hosts."""
+    for pattern, replacement in LHOST_ENTRY_RULES:
+        derived, count = re.subn(pattern, replacement, url or "")
+        if count:
+            return derived
+    return url
 
 
 def get_publisher_pdf_url(url: str) -> str | None:
@@ -112,6 +139,15 @@ SUPPLEMENT_PATTERN = re.compile(
 def check_supplement_url(url: str) -> bool:
     """Return whether a URL points at supplementary material."""
     return bool(SUPPLEMENT_PATTERN.search(url or ""))
+
+
+def get_url_origin(url: str) -> str:
+    """Return the upstream origin, including WebVPN's opaque host token."""
+    parsed = urlsplit(url or "")
+    if parsed.netloc.lower() != "webvpn.zju.edu.cn":
+        return parsed.netloc.lower()
+    match = re.match(r"/(?:https?|http)/(?:([^/]+))", parsed.path, re.I)
+    return "webvpn:" + (match.group(1).lower() if match else "")
 
 
 def check_article_url(url: str, doi: str, page_url: str) -> bool:
@@ -155,8 +191,8 @@ def filter_pdf_candidates(lurl, doi: str, page_url: str) -> list[str]:
     lown = [url for url in lkept if check_article_url(url, doi, page_url)]
     if lown:
         return lown
-    host = urlsplit(page_url or "").netloc
-    return [url for url in lkept if urlsplit(url).netloc == host]
+    origin = get_url_origin(page_url)
+    return [url for url in lkept if get_url_origin(url) == origin]
 
 
 ### injected JavaScript, to here ###

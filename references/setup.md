@@ -38,7 +38,7 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 |---|---|---|
 | `-port` | `9333` | CDP 调试端口 |
 | `-data_dir` | `~\.pj\p-literature-download` | 本机状态根目录，下辖 `profile\` 与 `download\` |
-| `-login_url` | `about:blank` | 要先过 WebVPN 就填 `https://webvpn.your-university.edu/` |
+启动器固定确保 `https://webvpn.zju.edu.cn/` 根页面存在；专用 Edge 已运行时复用进程和现有页面，不重写 live profile。
 
 脚本会把 `<DataDir>\download` 写进 `<DataDir>\profile\Default\Preferences`，
 **profile 是全新的也会创建**——
@@ -52,15 +52,19 @@ powershell -NoProfile -File <skill目录>\scripts\start_edge.ps1
 
 ## 3. 机构访问与持久 profile
 
-- 在弹出的窗口里**手动登录一次**学校统一身份认证 / WebVPN / CARSI；
-- cookie 落在该 profile，之后每次跑脚本自动复用，**脚本不接触任何凭据**；
-- 验证：随便打开一篇订阅文献，页面上应出现「Access provided by 你的学校」；
+- 直连出版社仍是主路径；整篇失败后才从 ZJU WebVPN 首页搜索框进入同一官方页面；
+- cookie 落在该 profile，之后自动复用；首次启动用系统凭据窗口采集本使用者账号与密码，
+  以 Windows DPAPI 密文保存为 `profile/webvpn-credential.clixml`；会话失效时才解密填表；
+  遇到「继续登录将踢掉其他已登录账号」自动点「继续」，无需人工；
+- 换账号或密码运行 `start_edge.ps1 -initialize_credentials`；凭据不写源码、命令行、日志或报告；
+- 验证：直连文章应出现「Access provided by 你的学校」；WebVPN 兜底结果的报告中
+  `access_via` 应为 `webvpn.zju.edu.cn`；
 - 不要把该 profile 复制给别人，它含 Cookie 与机构会话。每位使用者建立自己的 profile；
 - 换学校要改 `scripts/edge_download.py` 顶部的 `INSTITUTION`；
 - 遇到 hCaptcha 图片题时脚本过不了，由用户本人处理（`-human_wait N` 会把标签页弹到前台）。
   Cloudflare Turnstile 一律由脚本拟人化点击通过，不打扰用户。
-- **跑批期间不要在这个自动化 Edge 窗口里打开无关 PDF**，会被当成当前这篇抓走。
-  临时看文献用自己的日常 Edge。详见 SKILL.md 的「人工接管」小节。
+- 跑批期间尽量不要在这个自动化 Edge 窗口里打开无关 PDF；接管路径会按 DOI/标题核验并忽略错篇，
+  但无关标签页仍会增加扫描噪声。临时看文献用自己的日常 Edge。详见 SKILL.md 的「人工接管」小节。
 
 ## 4. 安装 skill
 
@@ -117,14 +121,15 @@ python <skill目录>\scripts\verify_pdf.py .\pdfs -batch
 
 DOI 文件格式：每行一个 DOI，可在空白后附备注；空行和 `#` 开头的行忽略。
 
-元数据不是 journal-article、文章类型被排除（SnapShot 等）或期刊不在缩写表时，
-脚本在开浏览器**之前**就报告并跳过，不下载。
+元数据查不到、属于补充材料、文章类型被排除（SnapShot 等）或缺年份/标题时，
+脚本在开浏览器**之前**就报告并跳过。DOI 本身指向预印本或期刊不在缩写表时仍会下载，
+表外期刊的文件名标签从元数据自动生成。
 
 ## 6. 常见问题
 
 | 现象 | 原因与处理 |
 |---|---|
-| 连不上 `127.0.0.1:9333` | 没跑 `start_edge.ps1`，或 Edge 被关了。代码里**永远不要**对 CDP 连接调 `browser.close()`，那会拆掉 DevTools 服务端 |
+| 连不上 `127.0.0.1:9333`，或首篇成功后全是 `WinError 10061` | 没跑 `start_edge.ps1`，或 Edge 被关了（旧版启动器用 `&` 起 Edge，调用 shell 结束就带走 Edge；现用 `Start-Process`）。代码里**永远不要**对 CDP 连接调 `browser.close()`，那会拆掉 DevTools 服务端 |
 | 挑战永远停在 `Request Verification: In Progress` | 走了系统代理。Cloudflare 判的是出口 IP，`start_edge.ps1` 已带 `--no-proxy-server` |
 | 全部 `no_pdf_link (state paywall)` | 机构会话过期，去自动化 Edge 里重新登录一次 |
 | `state captcha` | hCaptcha 图片题，脚本过不了。加 `-human_wait 120` 由用户点，或跳过 |

@@ -5,9 +5,8 @@
 # 其中订阅内容需要专用 profile 里已建立的机构会话，别人跑不一定满分。
 # 只想验证安装是否正常，用 examples/dois-sample.txt（全开放获取）。
 #
-# 故意保留两条不该被下载的记录，用来验证「开浏览器前就跳过」这条路径：
-#   10.1101/2020.03.22.20041079  medRxiv 预印本  -> not a journal article
-#   10.48550/arXiv.1706.03762    arXiv 预印本     -> not a journal article
+# medRxiv 与 arXiv 两条 DOI 用来覆盖预印本元数据路径；DOI 本身指向预印本时
+# 也应正常下载，不能因为不是 journal-article 就在开浏览器前跳过。
 
 10.1038/nature12373
 10.1016/j.cell.2016.03.044

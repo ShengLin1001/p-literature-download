@@ -1,0 +1,24 @@
+# 精选回归集：从 cc-conect-summary/literatures-download 的 193 篇清单中选取。
+# 只保存 DOI，不复制 PDF；覆盖经典文献和当前关键出版社路径。
+#
+# 其中包含订阅内容，需要专用 profile 的机构会话；它不是开放获取 smoke test。
+# 环境初验请用 examples/dois-sample.txt，完整出版社矩阵请用 dois-regression.txt。
+#
+#     powershell -NoProfile -File scripts/start_edge.ps1
+#     python scripts/edge_download.py tests/fixtures/dois-classics.txt \
+#         -output tests/artifacts/dois-classics -preset human
+#     python scripts/verify_pdf.py tests/artifacts/dois-classics -batch
+#
+# 每篇始终先直连；整篇直连失败后才走 WebVPN。实际路径以 report.json 的
+# access_via 为准，页面打开或登录成功本身不算下载通过。
+
+10.1038/35577                    Nature 1998 —— 经典短 DOI，直连
+10.1126/science.aat5211          Science 2018 —— 材料强度综述/观点，直连
+10.1021/acs.nanolett.6b04487     ACS Nano Letters 2017，直连
+10.1103/PhysRevB.107.014101      APS Physical Review B，直连
+10.1016/j.actamat.2024.120434    Elsevier Acta Materialia，直连签名资源
+10.1002/adma.202419635           Wiley Advanced Materials，pdfdirect
+10.1088/1361-651X/adc590         IOP MSMSE，直连
+10.1007/s10659-025-10133-9       Springer Journal of Elasticity，直连
+10.1063/5.0274822                AIP Applied Physics Letters，预期 WebVPN 兜底
+10.1073/pnas.2528037123          PNAS，预期 WebVPN 兜底

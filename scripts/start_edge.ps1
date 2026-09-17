@@ -1,4 +1,4 @@
-# Start the dedicated automation Edge used by edge_download.py.
+﻿# Start the dedicated automation Edge used by edge_download.py.
 #
 # Separate profile from the daily browser, so the debugging port stays open
 # and the institutional login (WebVPN / CARSI) persists across runs.
@@ -17,10 +17,8 @@ param(
     #   <data_dir>\download  where Edge drops downloaded files
     # edge_download.py takes the same -data_dir and expects the same two names.
     [string]$data_dir = "$env:USERPROFILE\.pj\p-literature-download",
-    # Landing page of your own institution's WebVPN / SSO. Only a convenience:
-    # log in here once and the cookie stays in this profile. Leave at the
-    # default if your institution needs no VPN.
-    [string]$login_url = "about:blank"
+    # Replace the DPAPI-encrypted credential stored with this profile.
+    [switch]$initialize_credentials
 )
 
 ### check, to here ###
@@ -40,18 +38,34 @@ if (-not $path_edge) {
 
 $path_profile  = Join-Path $data_dir "profile"
 $path_download = Join-Path $data_dir "download"
-$path_prefs    = Join-Path $path_profile "Default\Preferences"
+$path_prefs      = Join-Path $path_profile "Default\Preferences"
+$path_credential = Join-Path $path_profile "webvpn-credential.clixml"
+$url_webvpn      = "https://webvpn.zju.edu.cn/"
 New-Item -ItemType Directory -Force -Path $path_download | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $path_prefs) | Out-Null
+if ($initialize_credentials -or -not (Test-Path $path_credential)) {
+    Write-Host "▶️  保存此 profile 使用者的 WebVPN 凭据（仅当前 Windows 用户可解密）"
+    Get-Credential -Message "ZJU WebVPN" | Export-Clixml -Path $path_credential
+}
 
-# The download directory must be written while Edge is stopped, immediately
-# before launching, or a shutdown flush reverts it. always_open_pdf_externally
-# is deliberately NOT set here: it is a protected preference that Edge
-# restores on startup regardless, so edge_download.py fetches PDFs from inside
-# the page instead of relying on it.
-while (Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
-        Where-Object { $_.CommandLine -like "*$path_profile*" }) {
-    Start-Sleep -Milliseconds 500
+# Preferences must only be edited while this profile is stopped. If Edge is
+# already serving CDP, keep it alive and merely ensure the WebVPN root tab exists.
+$process_edge = Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
+    Where-Object { $_.CommandLine -like "*$path_profile*" } |
+    Select-Object -First 1
+if ($process_edge) {
+    try {
+        $pages = Invoke-RestMethod "http://127.0.0.1:$port/json/list"
+        if (-not ($pages | Where-Object { $_.type -eq "page" -and $_.url.TrimEnd('/') -eq $url_webvpn.TrimEnd('/') })) {
+            $encoded_url = [Uri]::EscapeDataString($url_webvpn)
+            Invoke-RestMethod -Method Put "http://127.0.0.1:$port/json/new?$encoded_url" | Out-Null
+        }
+        Write-Host "✅ 专用 Edge 已运行，WebVPN 首页已就绪。"
+        exit 0
+    } catch {
+        Write-Host "❌ ERROR: 专用 Edge 已运行，但 CDP 端点不可用：http://127.0.0.1:$port"
+        exit 1
+    }
 }
 
 # A brand-new profile has no Preferences file yet, so this has to seed one
@@ -84,7 +98,22 @@ Write-Host "📍 data_dir  : $data_dir"
 Write-Host "📍 profile   : $path_profile"
 Write-Host "📍 download  : $path_download"
 Write-Host "📍 CDP       : http://127.0.0.1:$port"
+Write-Host "📍 WebVPN    : $url_webvpn"
 Write-Host "▶️  启动 $path_edge"
 
-& $path_edge --remote-debugging-port=$port --user-data-dir=$path_profile --no-proxy-server `
-    --no-first-run --no-default-browser-check $login_url
+# Start-Process, not `&`: with `&` Edge stays a child of this shell, so the
+# caller blocks for Edge's whole lifetime, and an agent whose shell call times
+# out or ends takes Edge down with it - the batch then dies after one DOI with
+# "connection refused". Detached, the launcher returns once CDP answers.
+Start-Process -FilePath $path_edge -ArgumentList @(
+    "--remote-debugging-port=$port", "--user-data-dir=`"$path_profile`"",
+    "--no-proxy-server", "--no-first-run", "--no-default-browser-check", $url_webvpn)
+foreach ($i in 1..30) {
+    try {
+        Invoke-RestMethod "http://127.0.0.1:$port/json/version" -TimeoutSec 2 | Out-Null
+        Write-Host "✅ CDP 已就绪：http://127.0.0.1:$port"
+        exit 0
+    } catch { Start-Sleep -Milliseconds 500 }
+}
+Write-Host "❌ ERROR: Edge 已启动，但 15s 内 CDP 端点没有响应：http://127.0.0.1:$port"
+exit 1
