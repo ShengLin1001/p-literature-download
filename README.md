@@ -13,6 +13,16 @@
 `skills-using/root/p-literature-download`。**改动仍然提交到本仓库**，下游用
 `git submodule update --remote` 拉取。
 
+## 实测记录
+
+- **批量约两百篇**（2026-09，作者自用）：之前随手存进微信助手、一直没下的文献 DOI，
+  一次性批量跑完。![批量下载结果](docs/assets/batch-result.png)
+- **单篇全流程录屏**（2026-09-22，DOI `10.1016/j.actamat.2024.120434`）：从空目录开始，
+  专用 Edge 自动过 ScienceDirect 验证，进入带「Zhejiang University Library」授权的文章页
+  并落盘正文 PDF（17 页，39,832,766 字节），通过 DOI 验收。录屏见
+  [docs/assets/elsevier-continuous-screen.mp4](docs/assets/elsevier-continuous-screen.mp4)
+  （仅裁掉开头约 5 秒误切窗口的画面并遮住出口 IP，中间无剪接；本轮无人工接管）。
+
 ## 不做什么
 
 只从出版商官网取正文。**不用** Elsevier API、Unpaywall、OpenAlex、CORE、DOAJ、
