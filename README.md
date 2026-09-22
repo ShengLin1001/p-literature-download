@@ -22,6 +22,40 @@ arXiv 时照常下载）。补充材料、SnapShot、采访稿都不算下载成
 
 ## 快速开始
 
+### 不熟悉 PowerShell？让 agent 帮你
+
+把下面整段提示词复制给支持本地终端和文件操作的 agent（如 Claude Code、Codex）。
+安装过程中仍可能需要你确认命令执行权限，并在 Windows 系统凭据窗口中亲自输入浙大
+WebVPN 账号和密码；**不要把账号或密码发到聊天中**。
+
+```text
+我使用 Windows 10/11，请你实际协助我安装并初始化 p-literature-download，
+不要只把命令发给我。项目地址是：
+https://github.com/ShengLin1001/p-literature-download
+
+请按以下要求执行：
+1. 先检查 Git、Python 3.11+ 和 Microsoft Edge 是否可用；如果缺少软件，说明缺少
+   什么并在安装前征得我的确认。
+2. 确认当前 agent 的 skill 目录，把完整仓库克隆为 p-literature-download。不要使用
+   npx skills add，也不要只复制 SKILL.md。若目标目录已存在，先确认它是这个仓库并
+   检查本地改动；不得覆盖本地改动，无改动时才用 git pull 更新。
+3. 在该仓库中安装 playwright、websocket-client、pypdf，并运行两个离线自检：
+   python scripts/edge_download.py -selftest
+   python scripts/verify_pdf.py -selftest
+4. 运行 scripts/start_edge.ps1 启动专用 Edge。需要我操作 Windows 凭据窗口时暂停
+   提醒我；不要向我索要、读取或回显账号和密码，也不要操作我原有的浏览器 profile。
+5. 检查专用 Edge 是否正常启动，并告诉我安装目录、本机 data dir、自检结果和下一步
+   怎么显式调用这个 skill。新安装的 skill 如果要新会话才能识别，也请明确提醒我。
+6. 完成初始化后先不要下载我的私人 DOI；询问我是否要用仓库中的六篇公开样例验证。
+   若我同意且由你执行脚本，请使用 -preset agent，并如实报告每篇结果，不要把启动
+   浏览器或打开网页当成下载成功。
+
+只在确实需要我操作或决定时暂停；遇到错误先诊断，不要反复重跑，也不要修改项目脚本。
+```
+
+如果仓库已经克隆到本机，也可以先在 agent 中打开仓库目录，再粘贴同一段提示词；agent
+应复用现有目录，不再重复克隆。
+
 ### 1. 装依赖
 
 Python 3.11+，本机已装 Microsoft Edge。
